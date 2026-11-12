@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AppLayout } from "./layouts/AppLayout";
 import { Dashboard } from "./pages/Dashboard";
 import { Reports } from "./pages/Reports";
@@ -24,7 +24,7 @@ export default function App() {
   useRealtimeSync();
 
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
 
           <Route element={<PublicRoute />}>
@@ -53,7 +53,7 @@ export default function App() {
             </Route>
           </Route>
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
