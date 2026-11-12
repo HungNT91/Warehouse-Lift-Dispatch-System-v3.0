@@ -48,7 +48,7 @@ export function TopNav() {
       dot: 'bg-green-500 animate-pulse',
       text: 'text-green-700 dark:text-green-400',
       bg: 'bg-green-50 dark:bg-green-900/30',
-      label: isSheet ? 'GOOGLE SHEET' : 'REALTIME',
+      label: isSheet ? 'REALTIME' : 'REALTIME',
       labelMobile: isSheet ? 'SHEET' : 'LIVE',
     },
     polling: {
