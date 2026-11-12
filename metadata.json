@@ -1,0 +1,8 @@
+{
+  "name": "Remix Warehouse-Lift-Dispatch-System-v2.0",
+  "description": "Imported from GitHub: HungNT91/Warehouse-Lift-Dispatch-System-v2.0",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
