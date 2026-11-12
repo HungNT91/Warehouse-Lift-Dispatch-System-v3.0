@@ -17,10 +17,10 @@ import {
 
 const mockUsersFallback: (User & { status: 'active' | 'offline' })[] = [
   {
-    id: 'u1',
-    email: 'NV-001@liftflow.local',
+    id: 'NV001',
+    email: 'NV001@liftflow.local',
     full_name: 'Nguyễn Văn Hùng',
-    employee_code: 'NV-001',
+    employee_code: 'NV001',
     phone: '0988123456',
     role: 'Admin',
     status: 'active',
@@ -28,10 +28,10 @@ const mockUsersFallback: (User & { status: 'active' | 'offline' })[] = [
     updated_at: '2026-01-15T00:00:00Z',
   },
   {
-    id: 'u2',
-    email: 'NV-002@liftflow.local',
+    id: 'NV002',
+    email: 'NV002@liftflow.local',
     full_name: 'Trần Văn Hải',
-    employee_code: 'NV-002',
+    employee_code: 'NV002',
     phone: '0977234567',
     role: 'Supervisor',
     status: 'active',
@@ -39,10 +39,10 @@ const mockUsersFallback: (User & { status: 'active' | 'offline' })[] = [
     updated_at: '2026-01-16T00:00:00Z',
   },
   {
-    id: 'u3',
-    email: 'NV-003@liftflow.local',
+    id: 'NV003',
+    email: 'NV003@liftflow.local',
     full_name: 'Phạm Lan Trang',
-    employee_code: 'NV-003',
+    employee_code: 'NV003',
     phone: '0966345678',
     role: 'Worker',
     status: 'offline',
@@ -173,9 +173,15 @@ export function Users() {
         }).catch(console.error);
 
         toast.success(`Đã cập nhật nhân viên "${formData.full_name}" trong Database!`);
-      } else {
+        const adminId = formData.employee_code.trim();
+        if (!adminId) {
+          toast.error('Vui lòng nhập Mã ID nhân viên do Admin tạo!');
+          return;
+        }
+
         const newCreatedUser = await db.users.create({
-          employee_code: formData.employee_code || `NV-${Math.floor(100 + Math.random() * 899)}`,
+          id: adminId,
+          employee_code: adminId,
           full_name: formData.full_name,
           phone: formData.phone,
           role_id: selectedRoleId,
@@ -458,11 +464,11 @@ export function Users() {
             <div className="p-6 space-y-4">
               <div>
                 <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Mã Nhân Viên (Tên đăng nhập) <span className="text-red-500">*</span>
+                  Mã ID Nhân Viên (Admin tự tạo, không tự sinh) <span className="text-red-500">*</span>
                 </label>
                 <input 
                   type="text" 
-                  placeholder="VD: NV009"
+                  placeholder="VD: NV001, NV009..."
                   value={formData.employee_code}
                   onChange={(e) => setFormData({ ...formData, employee_code: e.target.value })}
                   disabled={!!editingUser} // Optional: don't allow changing code after creation

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useLiftStore } from '../stores/useLiftStore';
-import { speakText } from '../utils/audio';
+import { speakText, speakUncollectedWarning } from '../utils/audio';
+import { safeParseTimestamp } from '../utils/time';
 import { toast } from 'sonner';
 import type { Lift } from '../types';
 
@@ -73,7 +74,12 @@ export function getRecipientFloor(user: any, assignment: any): number | null {
         const num = parseInt(floorIdStr.replace(/[^0-9]/g, ''), 10);
         if (!isNaN(num) && num > 0) return num;
     }
-    // Fallback: match known employee codes or patterns
+    // 4. Nếu là Admin hoặc Giám sát kho (Supervisor) và chưa chọn trạm riêng -> Mặc định là Phòng Điều Hành (0 - Toàn kho)
+    if (user?.role === 'Admin' || user?.role === 'Supervisor' || !user) {
+        return 0; // 0 = Lắng nghe mọi thông báo tời và cảnh báo
+    }
+
+    // 5. Fallback: match known employee codes or patterns
     if (user?.employee_code) {
         const emp = user.employee_code.toUpperCase();
         if (emp === 'NV-002') return 2;
@@ -87,7 +93,9 @@ export function getRecipientFloor(user: any, assignment: any): number | null {
         if (user.id === 'u3') return 4;
         if (user.id === 'u4') return 1;
     }
-    return null;
+
+    // Nếu chưa xác định được ca làm việc -> Cho phép nhận thông báo để người dùng/nhân viên không bị bỏ lỡ
+    return 0;
 }
 
 /** Robust recipient lift resolution */
@@ -104,7 +112,7 @@ export function getRecipientLiftId(user: any, assignment: any): string | null {
  * 2. Nếu targetFloor === 0: Kênh thông báo chung toàn kho -> Tất cả thiết bị đều phát.
  * 3. Nếu targetFloor > 0: Thông báo chỉ định tầng nhận hàng (ví dụ: Tời đến Tầng 3 nhận hàng):
  *    -> CHỈ THIẾT BỊ Ở TẦNG ĐÓ MỚI ĐƯỢC PHÁT!
- *    -> Các thiết bị ở tầng khác (kể cả đăng nhập Admin/Supervisor) TUYỆT ĐỐI KHÔNG ĐƯỢC PHÁT!
+ *    -> Thiết bị ở chế độ Tổng (0) luôn được phát.
  */
 export function shouldPlayForRecipient(
     targetFloor: number,
@@ -128,15 +136,13 @@ export function shouldPlayForRecipient(
     // Xác định tầng của thiết bị này:
     const recipientFloor = getRecipientFloor(user, assignment);
 
-    // Nếu thiết bị được cấu hình chế độ Tổng / Toàn kho (0)
+    // Nếu thiết bị được cấu hình chế độ Tổng / Toàn kho (0) hoặc tài khoản quản trị
     if (recipientFloor === 0) {
         return true;
     }
 
-    // Nếu thiết bị chưa xác định tầng (chưa cấu hình tầng và tài khoản không gắn tầng)
-    // -> Không phát bừa bãi ra tất cả các tầng!
     if (recipientFloor === null) {
-        return false;
+        return true; // Cho phép phát khi chưa chọn tầng để không làm mất cảnh báo
     }
 
     // Thiết bị PHẢI ở đúng tầng nhận hàng (targetFloor)
@@ -231,7 +237,8 @@ export function useAudioBroadcast() {
 
                 toast.info(`🔊 Thông báo phát thanh (${floorLabel}${liftLabel}): ${text.substring(0, 80)}...`, { duration: 6000 });
                 const ttsPrefix = buildTtsPrefix(Number(targetFloor) || 0, String(targetLift || 'ALL'), lifts);
-                speakText(`${ttsPrefix}${text}`);
+                const speechContent = /^(thông báo|cảnh báo)/i.test(text.trim()) ? text : `${ttsPrefix}${text}`;
+                speakText(speechContent);
             }
         };
 
@@ -299,9 +306,67 @@ export function useAudioBroadcast() {
                     duration: 6000,
                 });
                 const ttsPrefix = buildTtsPrefix(Number(targetFloor) || 0, String(targetLift || 'ALL'), lifts);
-                speakText(`${ttsPrefix}${cleanText}`);
+                const speechContent = /^(thông báo|cảnh báo)/i.test(cleanText.trim()) ? cleanText : `${ttsPrefix}${cleanText}`;
+                speakText(speechContent);
             }
         });
     }, [notifications, user, assignment, lifts]);
+
+    // 3. Giám sát toàn hệ thống: Cảnh báo hàng chưa lấy trong thang quá 2 phút (chạy nền trên mọi trang qua AppLayout)
+    const lastWarnedUncollectedRef = useRef<{ [liftId: string]: number }>({});
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const now = Date.now();
+            const waitingLifts = (lifts || []).filter(l => l.status === 'WAITING_PICKUP');
+            const activeIds = new Set(waitingLifts.map(l => l.id));
+
+            // Dọn dẹp ref cho các thang đã lấy hàng xong
+            Object.keys(lastWarnedUncollectedRef.current).forEach(id => {
+                if (!activeIds.has(id)) {
+                    delete lastWarnedUncollectedRef.current[id];
+                }
+            });
+
+            waitingLifts.forEach(lift => {
+                const rawStart = lift.pickup_start_time;
+                let start = typeof rawStart === 'number' && rawStart > 0
+                    ? rawStart
+                    : (rawStart ? safeParseTimestamp(rawStart) : now);
+
+                if (now - start < 0 || now - start > 2 * 3600 * 1000) {
+                    start = now;
+                }
+
+                const elapsedSecs = Math.max(0, Math.floor((now - start) / 1000));
+                // Mốc cảnh báo định kỳ mỗi 2 phút (120s, 240s, 360s...)
+                const intervalNumber = Math.floor(elapsedSecs / 120);
+                if (intervalNumber >= 1) {
+                    const lastWarned = lastWarnedUncollectedRef.current[lift.id] || 0;
+                    if (intervalNumber > lastWarned) {
+                        lastWarnedUncollectedRef.current[lift.id] = intervalNumber;
+                        const minutes = intervalNumber * 2;
+
+                        const canPlay = shouldPlayForRecipient(
+                            Number(lift.current_floor) || 0,
+                            lift.id,
+                            '',
+                            user,
+                            assignment
+                        );
+
+                        if (canPlay) {
+                            const liftDisplayName = lift.lift_number ? lift.lift_number.replace('Lift ', 'Tời ') : `Tời ${lift.id}`;
+                            toast.warning(`🚨 Cảnh báo hàng chưa lấy: ${liftDisplayName} tại Tầng ${lift.current_floor} đã đợi ${minutes} phút!`, {
+                                duration: 8000
+                            });
+                            speakUncollectedWarning(lift.lift_number || lift.id, lift.current_floor || 1, minutes);
+                        }
+                    }
+                }
+            });
+        }, 2500);
+
+        return () => clearInterval(interval);
+    }, [lifts, user, assignment]);
 }
 

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { Lift, Job, AppNotification, ActivityLog } from '../types';
-import { db, isUuid } from '../api/dbClient';
+import { db, isUuid, generateJobNo, mockDbData } from '../api/dbClient';
 import { mockLifts, mockJobs, mockNotifications, mockActivities } from '../data/mock';
 import { useAuthStore } from './useAuthStore';
 import { speakLiftArrival } from '../utils/audio';
@@ -159,7 +159,9 @@ function processLiftsAndJobs(
       computedProgress = 100;
     }
 
-    const normalizedLiftId = (d.id && !d.id.includes('-')) ? d.id : (d.lift_code || d.id);
+    const rawLiftId = d.id !== undefined && d.id !== null ? String(d.id).trim() : '';
+    const rawLiftCode = d.lift_code !== undefined && d.lift_code !== null ? String(d.lift_code).trim() : '';
+    const normalizedLiftId = (rawLiftId && !rawLiftId.includes('-')) ? rawLiftId : (rawLiftCode || rawLiftId);
 
     const storedRestr = getStoredRestrictionForLift(d.id, d.lift_code, d.lift_name);
     const rawAllowed = (d.allowed_floors && d.allowed_floors.length < 4) ? d.allowed_floors : (storedRestr?.allowed_floors || d.allowed_floors || [1, 2, 3, 4]);
@@ -180,7 +182,7 @@ function processLiftsAndJobs(
       destination_floor: destFloor,
       source_floor: srcFloor,
       status: liftStatus,
-      operator: activeJob ? (activeJob.creator_name || (activeJob.sender_id && userMap[activeJob.sender_id]) || (activeJob as any).created_by_name || null) : null,
+      operator: activeJob ? (activeJob.creator_name || (activeJob.sender_id && (userMap[String(activeJob.sender_id).replace(/^'/, '')] || userMap[activeJob.sender_id])) || (activeJob as any).created_by_name || null) : null,
       current_job_id: activeJob ? (activeJob.id || (activeJob as any).job_no) : (d.current_job || null),
       elapsed_time: null,
       pickup_start_time: pickupStartTime,
@@ -203,13 +205,18 @@ function processLiftsAndJobs(
     const qtyMatch = remarkStr.match(/x\s*(\d+)/i);
     const parsedQty = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
 
+    const cleanSenderId = String(j.sender_id || '').trim().replace(/^'/, '');
+    const creatorName = (cleanSenderId && userMap[cleanSenderId])
+      || (j.sender_id && userMap[j.sender_id])
+      || 'Nhân viên kho';
+
     return {
       id: j.id,
       code: j.job_no || j.id,
       lift_id: j.lift_id || 'L1',
       lift_number: dbLifts.find(l => l.id === j.lift_id || l.lift_code === j.lift_id)?.lift_name || j.lift_id || 'Thang P1',
-      created_by: j.sender_id || 'u1',
-      creator_name: (j.sender_id && userMap[j.sender_id]) ? userMap[j.sender_id] : 'Nhân viên kho',
+      created_by: cleanSenderId || 'u1',
+      creator_name: creatorName,
       source_floor: parseFloorWithMap(j.from_floor, floorMap),
       target_floor: parseFloorWithMap(j.to_floor, floorMap),
       status: (j.status as any) || 'CREATED',
@@ -363,28 +370,40 @@ function processActivities(
   return dbActivities.map(a => {
     // Resolve user display name
     let displayUserName = 'Hệ Thống';
-    if (a.user_id && a.user_id !== 'system') {
-      if (userMap[a.user_id]) {
-        displayUserName = userMap[a.user_id];
+    const rawUserId = a.user_id !== undefined && a.user_id !== null ? String(a.user_id).trim() : '';
+    const cleanUserId = rawUserId.replace(/^'/, '');
+    if (cleanUserId && cleanUserId.toLowerCase() !== 'system') {
+      if (userMap[cleanUserId] || userMap[rawUserId]) {
+        displayUserName = userMap[cleanUserId] || userMap[rawUserId];
       } else {
-        const foundUser = dbUsers.find(u => u.id === a.user_id || u.employee_code === a.user_id);
+        const foundUser = dbUsers.find(u => {
+          const uId = String(u.id || '').trim().replace(/^'/, '');
+          const uEmp = String(u.employee_code || '').trim().replace(/^'/, '');
+          if (uId === cleanUserId || uEmp === cleanUserId) return true;
+          if (/^\d+$/.test(cleanUserId)) {
+            const num = parseInt(cleanUserId, 10);
+            if (/^\d+$/.test(uId) && parseInt(uId, 10) === num) return true;
+            if (/^\d+$/.test(uEmp) && parseInt(uEmp, 10) === num) return true;
+          }
+          return false;
+        });
         if (foundUser) displayUserName = foundUser.full_name;
-        else if (!a.user_id.includes('-') || a.user_id.length < 20) displayUserName = a.user_id;
+        else if (!cleanUserId.includes('-') || cleanUserId.length < 20) displayUserName = cleanUserId;
       }
     }
 
     // Resolve entity display ID
-    let displayEntityId = a.record_id || '';
+    let displayEntityId = a.record_id !== undefined && a.record_id !== null ? String(a.record_id).trim() : '';
     if (displayEntityId && (displayEntityId.length > 20 || displayEntityId.includes('-'))) {
-      const matchingJob = dbJobs.find(j => j.id === displayEntityId || j.job_no === displayEntityId);
+      const matchingJob = dbJobs.find(j => String(j.id) === displayEntityId || String(j.job_no) === displayEntityId);
       if (matchingJob) {
         displayEntityId = matchingJob.job_no || matchingJob.id;
       } else {
-        const matchingLift = dbLifts.find(l => l.id === displayEntityId);
+        const matchingLift = dbLifts.find(l => String(l.id) === displayEntityId || String(l.lift_code) === displayEntityId);
         if (matchingLift) {
           displayEntityId = matchingLift.lift_name ? matchingLift.lift_name.replace('Lift ', 'Tời ') : 'Tời';
         } else {
-          const matchingUser = dbUsers.find(u => u.id === displayEntityId);
+          const matchingUser = dbUsers.find(u => String(u.id) === displayEntityId || String(u.employee_code) === displayEntityId);
           if (matchingUser) {
             displayEntityId = matchingUser.employee_code || matchingUser.full_name;
           } else {
@@ -689,16 +708,14 @@ export const useLiftStore = create<LiftState>((set, get) => ({
       }
     }
 
-    const d = new Date();
-    const timeSeq = `${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`;
-    const randSeq = Math.floor(100 + Math.random() * 900);
-    const newCode = `TR-${timeSeq}-${randSeq}`;
+    const existingJobs = [...get().jobs, ...(mockDbData.transportJobs || [])];
+    const newCode = generateJobNo(existingJobs, new Date());
     const newJob: Job = {
-      id: `job-${Date.now()}`,
+      id: newCode,
       code: newCode,
-      lift_id: jobData.lift_id || 'L1',
-      lift_number: get().lifts.find(l => l.id === jobData.lift_id)?.lift_number || 'Thang P1',
-      created_by: jobData.created_by || 'u1',
+      lift_id: jobData.lift_id || 'P1',
+      lift_number: get().lifts.find(l => l.id === jobData.lift_id || l.lift_code === jobData.lift_id)?.lift_number || `Thang ${jobData.lift_id || 'P1'}`,
+      created_by: jobData.created_by || 'NV001',
       creator_name: jobData.creator_name || 'Nhân viên kho',
       source_floor: jobData.source_floor || 1,
       target_floor: jobData.target_floor || 2,
@@ -713,6 +730,7 @@ export const useLiftStore = create<LiftState>((set, get) => ({
 
     // Save transport_job to Database
     const createdDbJob = await db.transportJobs.create({
+      id: newCode,
       job_no: newCode,
       lift_id: newJob.lift_id,
       from_floor: `f${newJob.source_floor}`,
@@ -724,6 +742,7 @@ export const useLiftStore = create<LiftState>((set, get) => ({
 
     if (createdDbJob?.id) {
       newJob.id = createdDbJob.id;
+      newJob.code = createdDbJob.job_no || createdDbJob.id;
     }
 
     // Đánh dấu thao tác cục bộ để Realtime WebSocket không re-fetch lặp lại
@@ -905,8 +924,8 @@ export const useLiftStore = create<LiftState>((set, get) => ({
             id: n.id,
             title: n.title,
             message: n.message,
-            severity: (n.notification_type && (n.notification_type.includes('WARNING') || n.notification_type.includes('URGENT'))) ? 'warning' : 'info',
-            category: (n.notification_type?.includes('AUDIO_DISPATCH') || n.message?.includes('[AUDIO_DISPATCH')) ? 'system' : 'job',
+            severity: (n.notification_type && (String(n.notification_type).includes('WARNING') || String(n.notification_type).includes('URGENT'))) ? 'warning' : 'info',
+            category: (String(n.notification_type || '').includes('AUDIO_DISPATCH') || String(n.message || '').includes('[AUDIO_DISPATCH')) ? 'system' : 'job',
             is_read: n.status === 'READ',
             created_at: n.created_at,
             link_id: n.job_id
@@ -964,7 +983,22 @@ export const useLiftStore = create<LiftState>((set, get) => ({
 
       _cachedUserMap = {};
       dbUsers.forEach(u => {
-        _cachedUserMap[u.id] = u.full_name;
+        const cleanId = String(u.id || '').trim().replace(/^'/, '');
+        const cleanEmp = String(u.employee_code || '').trim().replace(/^'/, '');
+        if (cleanId) {
+          _cachedUserMap[cleanId] = u.full_name;
+          _cachedUserMap[`'${cleanId}`] = u.full_name;
+          if (/^\d+$/.test(cleanId)) {
+            _cachedUserMap[String(parseInt(cleanId, 10))] = u.full_name;
+          }
+        }
+        if (cleanEmp) {
+          _cachedUserMap[cleanEmp] = u.full_name;
+          _cachedUserMap[`'${cleanEmp}`] = u.full_name;
+          if (/^\d+$/.test(cleanEmp)) {
+            _cachedUserMap[String(parseInt(cleanEmp, 10))] = u.full_name;
+          }
+        }
       });
 
       _cachedFloorMap = {};
@@ -1000,8 +1034,8 @@ export const useLiftStore = create<LiftState>((set, get) => ({
         id: n.id,
         title: n.title,
         message: n.message,
-        severity: (n.notification_type && (n.notification_type.includes('WARNING') || n.notification_type.includes('URGENT'))) ? 'warning' : 'info',
-        category: (n.notification_type?.includes('AUDIO_DISPATCH') || n.message?.includes('[AUDIO_DISPATCH')) ? 'system' : 'job',
+        severity: (n.notification_type && (String(n.notification_type).includes('WARNING') || String(n.notification_type).includes('URGENT'))) ? 'warning' : 'info',
+        category: (String(n.notification_type || '').includes('AUDIO_DISPATCH') || String(n.message || '').includes('[AUDIO_DISPATCH')) ? 'system' : 'job',
         is_read: n.status === 'READ',
         created_at: n.created_at,
         link_id: n.job_id

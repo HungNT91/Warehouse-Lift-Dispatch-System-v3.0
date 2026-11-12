@@ -36,10 +36,10 @@ export const syncGoogleSheetData = async (): Promise<boolean> => {
 
     if (Array.isArray(data.users) && data.users.length > 0) {
       mockDbData.users = data.users.map(u => {
-        const rawId = String(u.id || '').trim();
-        const empCode = String(u.employee_code || '').trim();
-        // ID do admin tạo trong sheet Users; nếu trước đó là UUID giả lập thì ưu tiên mã NV (NV001)
-        const cleanId = rawId && !isUuid(rawId) ? rawId : (empCode || rawId || `NV${Date.now().toString().slice(-4)}`);
+        // Cột ID trong sheet Users do Admin hệ thống tạo, không tự động sinh ra
+        const rawId = String(u.id || u.employee_code || '').trim().replace(/^'/, '');
+        const empCode = String(u.employee_code || rawId).trim().replace(/^'/, '');
+        const cleanId = rawId || empCode;
         return {
           ...u,
           id: cleanId,
@@ -57,18 +57,20 @@ export const syncGoogleSheetData = async (): Promise<boolean> => {
 
     if (Array.isArray(data.lifts) && data.lifts.length > 0) {
       mockDbData.lifts = data.lifts.map(l => {
-        const code = String(l.lift_code || l.id || '').trim();
-        const id = String(l.id || code).trim();
-        const name = String(l.lift_name || `Thang ${code || id}`).trim();
-        let currFloor = String(l.current_floor || '1').trim();
+        // Cột ID trong sheet Lifts tương ứng trực tiếp với cột lift_code
+        const code = String(l.lift_code || l.id || '').trim().replace(/^'/, '');
+        const id = String(l.id || code).trim().replace(/^'/, '');
+        const finalId = id || code;
+        const name = String(l.lift_name || `Thang ${finalId}`).trim();
+        let currFloor = String(l.current_floor || '1').trim().replace(/^'/, '');
         const numMatch = currFloor.match(/\d+/);
         if (numMatch) currFloor = numMatch[0];
         else currFloor = '1';
 
         return {
           ...l,
-          id: id,
-          lift_code: code || id,
+          id: finalId,
+          lift_code: finalId,
           lift_name: name,
           current_floor: currFloor,
           status_id: Number(l.status_id) || 1,
@@ -85,33 +87,50 @@ export const syncGoogleSheetData = async (): Promise<boolean> => {
         const rawTo = String(j.to_floor || '2').trim();
         const fromNum = rawFrom.match(/\d+/) ? rawFrom.match(/\d+/)![0] : '1';
         const toNum = rawTo.match(/\d+/) ? rawTo.match(/\d+/)![0] : '2';
-        const rawLift = String(j.lift_id || 'P1').trim();
-        const liftCode = rawLift.startsWith('P') ? rawLift : (rawLift.match(/\d+/) ? `P${rawLift.match(/\d+/)![0]}` : rawLift);
-        const jobId = String(j.id || j.job_no || '');
-        const jobNo = String(j.job_no || j.id || '');
+        const rawLift = String(j.lift_id || '').trim().replace(/^'/, '');
+        const liftCode = resolveLiftId(rawLift);
+        const jobId = String(j.id || j.job_no || '').trim().replace(/^'/, '');
+        const jobNo = String(j.job_no || j.id || '').trim().replace(/^'/, '');
+        const finalJobCode = jobId || jobNo;
         return {
           ...j,
-          id: jobId,
-          job_no: jobNo,
+          id: finalJobCode,
+          job_no: finalJobCode,
           lift_id: liftCode,
           from_floor: fromNum,
           to_floor: toNum,
-          sender_id: String(j.sender_id || ''),
-          receiver_id: j.receiver_id ? String(j.receiver_id) : null,
+          sender_id: resolveUserId(j.sender_id),
+          receiver_id: j.receiver_id ? resolveUserId(j.receiver_id) : null,
         };
       });
     }
 
     if (Array.isArray(data.dailyAssignments)) {
-      mockDbData.dailyAssignments = data.dailyAssignments;
+      mockDbData.dailyAssignments = data.dailyAssignments.map(a => ({
+        ...a,
+        id: String(a.id || `ASG-${String(a.work_date || '').replace(/-/g, '')}-${a.user_id}`).replace(/^'/, ''),
+        user_id: resolveUserId(a.user_id),
+        lift_id: resolveLiftId(a.lift_id),
+        floor_id: resolveFloorId(a.floor_id)
+      }));
     }
 
     if (Array.isArray(data.notifications)) {
-      mockDbData.notifications = data.notifications;
+      mockDbData.notifications = data.notifications.map(n => ({
+        ...n,
+        id: String(n.id || '').replace(/^'/, ''),
+        receiver_id: resolveUserId(n.receiver_id),
+        job_id: n.job_id ? String(n.job_id).replace(/^'/, '') : null,
+      }));
     }
 
     if (Array.isArray(data.activityLogs)) {
-      mockDbData.activityLogs = data.activityLogs;
+      mockDbData.activityLogs = data.activityLogs.map(a => ({
+        ...a,
+        id: typeof a.id === 'number' ? a.id : Number(String(a.id).replace(/^'/, '')) || a.id,
+        user_id: resolveUserId(a.user_id),
+        record_id: a.record_id ? String(a.record_id).replace(/^'/, '') : null,
+      }));
     }
 
     if (Array.isArray(data.systemSettings)) {
@@ -166,8 +185,8 @@ let cachedLifts: DbLift[] = [];
 let cachedUsers: DbUser[] = [];
 let _lastRestrictionSyncTime = 0;
 
-// Helper to generate sequential Job No: TR-ddmmyyyy-xxxx
-export const generateJobNo = (existingJobs: { job_no?: string; id?: string }[], date: Date = new Date()): string => {
+// Helper to generate sequential Job No: TR-ddmmyyyy-xxxx (e.g. TR-12112026-0001)
+export const generateJobNo = (existingJobs: { job_no?: string; id?: string; code?: string }[], date: Date = new Date()): string => {
   const day = String(date.getDate()).padStart(2, '0');
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const year = String(date.getFullYear());
@@ -175,7 +194,7 @@ export const generateJobNo = (existingJobs: { job_no?: string; id?: string }[], 
 
   let maxSeq = 0;
   (existingJobs || []).forEach(job => {
-    const code = String(job.job_no || job.id || '').trim();
+    const code = String(job.job_no || job.id || (job as any).code || '').trim();
     if (code.startsWith(prefix)) {
       const numPart = code.slice(prefix.length);
       const num = parseInt(numPart, 10);
@@ -201,29 +220,53 @@ export const resolveFloorId = (floorVal: any): string => {
 export const resolveLiftId = (liftVal: any): string => {
   if (!liftVal) return 'P1';
   const str = String(liftVal).trim();
-  if (/^P\d+$/i.test(str)) return str.toUpperCase();
   const allLifts = cachedLifts.length > 0 ? cachedLifts : mockDbData.lifts;
   const matched = allLifts.find(l =>
-    l.id === str ||
+    (l.id && l.id.toLowerCase() === str.toLowerCase()) ||
     (l.lift_code && l.lift_code.toLowerCase() === str.toLowerCase()) ||
     (l.lift_name && l.lift_name.toLowerCase() === str.toLowerCase())
   );
-  if (matched) return matched.lift_code || matched.id;
-  const numMatch = str.match(/\d+/);
-  if (numMatch) return `P${numMatch[0]}`;
+  if (matched) return matched.id || matched.lift_code;
+  if (/^[a-zA-Z]+\d+$/i.test(str)) return str.toUpperCase();
   return str;
 };
 
 export const resolveUserId = (userVal: any): string => {
   if (!userVal) return 'NV001';
-  const str = String(userVal).trim();
+  const rawStr = String(userVal).trim();
+  const str = rawStr.replace(/^'/, '');
+  if (!str) return 'NV001';
   const allUsers = cachedUsers.length > 0 ? cachedUsers : mockDbData.users;
-  const matched = allUsers.find(u =>
-    u.id === str ||
-    (u.employee_code && String(u.employee_code).toLowerCase() === str.toLowerCase()) ||
-    (u.full_name && String(u.full_name).toLowerCase() === str.toLowerCase())
-  );
-  if (matched) return matched.employee_code || matched.id;
+
+  // 1. Khớp chính xác ID, Mã nhân viên, hoặc Tên nhân viên
+  const matched = allUsers.find(u => {
+    const uId = String(u.id || '').trim().replace(/^'/, '');
+    const uEmp = String(u.employee_code || '').trim().replace(/^'/, '');
+    const uName = String(u.full_name || '').trim();
+    return (
+      (uId && uId.toLowerCase() === str.toLowerCase()) ||
+      (uEmp && uEmp.toLowerCase() === str.toLowerCase()) ||
+      (uName && uName.toLowerCase() === str.toLowerCase())
+    );
+  });
+  if (matched) return String(matched.id || matched.employee_code || '').replace(/^'/, '');
+
+  // 2. Khớp theo giá trị số (ví dụ: Google Sheet trả về '334' hoặc 334 nhưng ID chuẩn trong Users là '00334')
+  if (/^\d+$/.test(str)) {
+    const targetNum = parseInt(str, 10);
+    const matchedByNum = allUsers.find(u => {
+      const uId = String(u.id || '').trim().replace(/^'/, '');
+      const uEmp = String(u.employee_code || '').trim().replace(/^'/, '');
+      return (
+        (/^\d+$/.test(uId) && parseInt(uId, 10) === targetNum) ||
+        (/^\d+$/.test(uEmp) && parseInt(uEmp, 10) === targetNum)
+      );
+    });
+    if (matchedByNum) {
+      return String(matchedByNum.id || matchedByNum.employee_code || '').replace(/^'/, '');
+    }
+  }
+
   return str;
 };
 
@@ -294,17 +337,25 @@ export const resolveUserUuid = (userVal: any, fallbackIndex: number = 1): string
   if (!isSupabaseConfigured()) {
     return resolveUserId(userVal);
   }
-  if (isUuid(userVal)) {
-    return String(userVal);
+  const cleanVal = typeof userVal === 'string' ? userVal.replace(/^'/, '') : userVal;
+  if (isUuid(cleanVal)) {
+    return String(cleanVal);
   }
 
-  if (userVal) {
-    const str = String(userVal).toLowerCase();
-    const matched = cachedUsers.find(u =>
-      u.id === userVal ||
-      (u.employee_code && String(u.employee_code).toLowerCase() === str) ||
-      (u.full_name && String(u.full_name).toLowerCase().includes(str))
-    );
+  if (cleanVal) {
+    const str = String(cleanVal).toLowerCase();
+    const matched = cachedUsers.find(u => {
+      const uId = String(u.id || '').replace(/^'/, '').toLowerCase();
+      const uEmp = String(u.employee_code || '').replace(/^'/, '').toLowerCase();
+      const uName = String(u.full_name || '').toLowerCase();
+      if (uId === str || uEmp === str || uName.includes(str)) return true;
+      if (/^\d+$/.test(str)) {
+        const num = parseInt(str, 10);
+        if (/^\d+$/.test(uId) && parseInt(uId, 10) === num) return true;
+        if (/^\d+$/.test(uEmp) && parseInt(uEmp, 10) === num) return true;
+      }
+      return false;
+    });
     if (matched && isUuid(matched.id)) return matched.id;
   }
 
@@ -318,7 +369,7 @@ export const resolveUserUuid = (userVal: any, fallbackIndex: number = 1): string
     'u3': '33333333-3333-4333-a333-333333333333',
     'u4': '33333333-3333-4333-a333-444444444444',
   };
-  if (userVal && fallbacks[String(userVal).toLowerCase()]) return fallbacks[String(userVal).toLowerCase()];
+  if (cleanVal && fallbacks[String(cleanVal).toLowerCase()]) return fallbacks[String(cleanVal).toLowerCase()];
 
   return '33333333-3333-4333-a333-111111111111';
 };
@@ -378,12 +429,12 @@ export const db = {
 
       // 1. Precise or normalized matching
       let matchedUser = allUsers.find(u => {
-        const empCode = u.employee_code ? String(u.employee_code).toLowerCase() : '';
+        const empCode = u.employee_code ? String(u.employee_code).replace(/^'/, '').toLowerCase() : '';
         const cleanEmpCode = empCode.replace(/[^a-z0-9]/g, '');
         const phone = u.phone !== undefined && u.phone !== null ? String(u.phone).toLowerCase() : '';
         const fullName = u.full_name ? String(u.full_name).toLowerCase() : '';
         const email = u.email ? String(u.email).toLowerCase() : '';
-        const id = u.id ? String(u.id).toLowerCase() : '';
+        const id = u.id ? String(u.id).replace(/^'/, '').toLowerCase() : '';
 
         return (
           (empCode && empCode === lower) ||
@@ -392,7 +443,11 @@ export const db = {
           (email && lower.includes('@') && email.split('@')[0] === lower.split('@')[0]) ||
           (phone && phone === lower) ||
           (fullName && fullName === lower) ||
-          (id && id === lower)
+          (id && id === lower) ||
+          (/^\d+$/.test(cleanLower) && (
+            (/^\d+$/.test(id) && parseInt(id, 10) === parseInt(cleanLower, 10)) ||
+            (/^\d+$/.test(empCode) && parseInt(empCode, 10) === parseInt(cleanLower, 10))
+          ))
         );
       });
 
@@ -443,7 +498,10 @@ export const db = {
       return { user: matchedUser, roleName };
     },
     async create(user: Omit<DbUser, 'id' | 'created_at'> & { id?: string }): Promise<DbUser> {
-      const adminId = (user.id || user.employee_code || '').trim() || `NV${Math.floor(100 + Math.random() * 899)}`;
+      const adminId = (user.id || user.employee_code || '').trim();
+      if (!adminId) {
+        throw new Error('ID người dùng do Admin chỉ định là bắt buộc, hệ thống không tự động sinh ID.');
+      }
       const newUser: DbUser = {
         ...user,
         id: adminId,
@@ -925,7 +983,7 @@ export const db = {
       return allJobs;
     },
 
-    async create(job: Omit<DbTransportJob, 'id' | 'created_at'>): Promise<DbTransportJob> {
+    async create(job: Omit<DbTransportJob, 'id' | 'created_at'> & { id?: string }): Promise<DbTransportJob> {
       // Đảm bảo cache dữ liệu tĩnh đã được nạp từ Supabase
       if (isSupabaseConfigured()) {
         try {
@@ -951,13 +1009,15 @@ export const db = {
         ? job.to_floor
         : parseInt(String(job.to_floor || '').replace(/[^0-9]/g, ''), 10) || 2;
 
-      const jobNo = job.job_no || `TR-${Math.floor(1000 + Math.random() * 9000)}`;
+      const existingJobs = mockDbData.transportJobs || [];
+      const jobNo = job.job_no || generateJobNo(existingJobs, new Date());
+      const jobId = job.id || jobNo;
       const nowIso = new Date().toISOString();
       const statusStr = job.status || 'CREATED';
       const remarkStr = job.remark || null;
 
       const newJob: DbTransportJob = {
-        id: crypto.randomUUID(),
+        id: jobId,
         created_at: nowIso,
         job_no: jobNo,
         lift_id: liftUuid,
@@ -1075,9 +1135,10 @@ export const db = {
             
             // Xử lý LỖI 4: duplicate key value violates unique constraint "transport_jobs_job_no_key"
             if (error && (error.code === '23505' || error.message.includes('job_no_key') || error.message.includes('unique constraint'))) {
-              const freshJobNo = `TR-${Date.now().toString().slice(-6)}-${Math.floor(100 + Math.random() * 900)}`;
+              const freshJobNo = generateJobNo([...mockDbData.transportJobs, { job_no: payload.job_no, id: payload.job_no }], new Date());
               console.warn(`⚠️ [Supabase transport_jobs] Trùng mã đơn ${payload.job_no}, tự sinh mã mới ${freshJobNo} và thử lại...`);
               payload.job_no = freshJobNo;
+              newJob.id = freshJobNo;
               newJob.job_no = freshJobNo;
               const retryUnique = await supabase.from('transport_jobs').insert([payload]).select().single();
               data = retryUnique.data;
@@ -1529,8 +1590,8 @@ const initialMockDbData = {
 
   users: [
     {
-      id: 'u1',
-      employee_code: 'NV-001',
+      id: 'NV001',
+      employee_code: 'NV001',
       full_name: 'Nguyễn Văn Hùng',
       telegram_id: '689230129',
       phone: '0988123456',
@@ -1541,8 +1602,8 @@ const initialMockDbData = {
       password: '123456'
     },
     {
-      id: 'u2',
-      employee_code: 'NV-002',
+      id: 'NV002',
+      employee_code: 'NV002',
       full_name: 'Trần Văn Hải',
       telegram_id: '689230130',
       phone: '0977234567',
@@ -1553,8 +1614,8 @@ const initialMockDbData = {
       password: '123456'
     },
     {
-      id: 'u3',
-      employee_code: 'NV-003',
+      id: 'NV003',
+      employee_code: 'NV003',
       full_name: 'Phạm Lan Trang',
       telegram_id: '689230131',
       phone: '0966345678',
@@ -1565,8 +1626,8 @@ const initialMockDbData = {
       password: '123456'
     },
     {
-      id: 'u4',
-      employee_code: 'NV-004',
+      id: 'NV004',
+      employee_code: 'NV004',
       full_name: 'Đặng Anh Lực',
       telegram_id: '689230132',
       phone: '0955456789',
@@ -1581,7 +1642,7 @@ const initialMockDbData = {
   userDevices: [
     {
       id: 'd1',
-      user_id: 'u1',
+      user_id: 'NV001',
       device_name: 'Samsung Galaxy Tab A8',
       device_type: 'TABLET',
       browser: 'Chrome Mobile 122',
@@ -1602,10 +1663,10 @@ const initialMockDbData = {
 
   lifts: [
     {
-      id: 'L1',
-      lift_code: 'LIFT-01',
-      lift_name: 'Lift 01',
-      current_floor: 'f1',
+      id: 'P1',
+      lift_code: 'P1',
+      lift_name: 'Thang P1',
+      current_floor: '1',
       status_id: 1,
       has_cargo: false,
       current_job: null,
@@ -1614,35 +1675,35 @@ const initialMockDbData = {
       lock_type: 'NONE'
     },
     {
-      id: 'L2',
-      lift_code: 'LIFT-02',
-      lift_name: 'Lift 02',
-      current_floor: 'f3',
+      id: 'P2',
+      lift_code: 'P2',
+      lift_name: 'Thang P2',
+      current_floor: '3',
       status_id: 2,
       has_cargo: true,
-      current_job: 'j2',
+      current_job: 'TR-12112026-0002',
       last_update: new Date().toISOString(),
       note: 'Đang chạy từ T3 xuống T1',
       lock_type: 'NONE'
     },
     {
-      id: 'L3',
-      lift_code: 'LIFT-03',
-      lift_name: 'Lift 03',
-      current_floor: 'f4',
+      id: 'P3',
+      lift_code: 'P3',
+      lift_name: 'Thang P3',
+      current_floor: '4',
       status_id: 3,
       has_cargo: true,
-      current_job: 'j4',
+      current_job: 'TR-12112026-0003',
       last_update: new Date(Date.now() - 120000).toISOString(),
       pickup_start_time: Date.now() - 120000,
       note: 'Tồn hàng chờ dỡ tại Tầng 4 quá 2 phút',
       lock_type: 'NONE'
     },
     {
-      id: 'L4',
-      lift_code: 'LIFT-04',
-      lift_name: 'Lift 04',
-      current_floor: 'f2',
+      id: 'P4',
+      lift_code: 'P4',
+      lift_name: 'Thang P4',
+      current_floor: '2',
       status_id: 4,
       has_cargo: false,
       current_job: null,
@@ -1651,10 +1712,10 @@ const initialMockDbData = {
       lock_type: 'FLOOR_LOCK'
     },
     {
-      id: 'L5',
-      lift_code: 'LIFT-05',
-      lift_name: 'Lift 05',
-      current_floor: 'f1',
+      id: 'P5',
+      lift_code: 'P5',
+      lift_name: 'Thang P5',
+      current_floor: '1',
       status_id: 5,
       has_cargo: false,
       current_job: null,
@@ -1663,13 +1724,13 @@ const initialMockDbData = {
       lock_type: 'MAINTENANCE'
     },
     {
-      id: 'L6',
-      lift_code: 'LIFT-06',
-      lift_name: 'Lift 06',
-      current_floor: 'f4',
+      id: 'P6',
+      lift_code: 'P6',
+      lift_name: 'Thang P6',
+      current_floor: '4',
       status_id: 2,
       has_cargo: true,
-      current_job: 'j1',
+      current_job: 'TR-12112026-0001',
       last_update: new Date().toISOString(),
       note: 'Đang chở 12 thùng linh kiện hỏa tốc',
       lock_type: 'NONE'
@@ -1679,11 +1740,11 @@ const initialMockDbData = {
   liftCommands: [
     {
       id: 'cmd-1',
-      lift_id: 'L1',
+      lift_id: 'P1',
       command: 'MOVE_TO_FLOOR',
       payload: { floor_no: 4 },
       status: 'EXECUTED',
-      created_by: 'u1',
+      created_by: 'NV001',
       created_at: new Date(Date.now() - 10 * 60000).toISOString(),
       executed_at: new Date(Date.now() - 9 * 60000).toISOString()
     }
@@ -1692,10 +1753,10 @@ const initialMockDbData = {
   liftReservations: [
     {
       id: 'res-1',
-      lift_id: 'L3',
+      lift_id: 'P3',
       from_floor_id: 'f1',
       to_floor_id: 'f4',
-      reserved_by: 'u3',
+      reserved_by: 'NV003',
       start_time: new Date(Date.now() - 45 * 60000).toISOString(),
       end_time: new Date(Date.now() + 15 * 60000).toISOString(),
       reason: 'Đặt tời vận chuyển vật tư xưởng Tầng 4',
@@ -1708,18 +1769,18 @@ const initialMockDbData = {
     {
       id: 'asg-1',
       work_date: new Date().toISOString().split('T')[0],
-      user_id: 'u4',
-      floor_id: 'f1',
-      lift_id: 'L1',
+      user_id: 'NV004',
+      floor_id: '1',
+      lift_id: 'P1',
       shift: 'CA_SANG',
       created_at: new Date().toISOString()
     },
     {
       id: 'asg-2',
       work_date: new Date().toISOString().split('T')[0],
-      user_id: 'u3',
-      floor_id: 'f4',
-      lift_id: 'L3',
+      user_id: 'NV003',
+      floor_id: '4',
+      lift_id: 'P3',
       shift: 'CA_SANG',
       created_at: new Date().toISOString()
     }
@@ -1727,39 +1788,39 @@ const initialMockDbData = {
 
   transportJobs: [
     {
-      id: 'j1',
-      job_no: 'TR-8994',
-      lift_id: 'L6',
-      from_floor: 'f1',
-      to_floor: 'f4',
-      sender_id: 'u1',
-      receiver_id: 'u3',
+      id: 'TR-12112026-0001',
+      job_no: 'TR-12112026-0001',
+      lift_id: 'P6',
+      from_floor: '1',
+      to_floor: '4',
+      sender_id: 'NV001',
+      receiver_id: 'NV003',
       status: 'MOVING',
       created_at: new Date(Date.now() - 5 * 60000).toISOString(),
       moving_at: new Date(Date.now() - 2 * 60000).toISOString(),
       remark: 'Đơn hỏa tốc - 12 thùng linh kiện K2'
     },
     {
-      id: 'j2',
-      job_no: 'TR-8992',
-      lift_id: 'L2',
-      from_floor: 'f3',
-      to_floor: 'f1',
-      sender_id: 'u2',
-      receiver_id: 'u4',
+      id: 'TR-12112026-0002',
+      job_no: 'TR-12112026-0002',
+      lift_id: 'P2',
+      from_floor: '3',
+      to_floor: '1',
+      sender_id: 'NV002',
+      receiver_id: 'NV004',
       status: 'MOVING',
       created_at: new Date(Date.now() - 20 * 60000).toISOString(),
       moving_at: new Date(Date.now() - 5 * 60000).toISOString(),
       remark: '25 thùng bao bì xuất khẩu'
     },
     {
-      id: 'j4',
-      job_no: 'TR-8990',
-      lift_id: 'L3',
-      from_floor: 'f1',
-      to_floor: 'f4',
-      sender_id: 'u1',
-      receiver_id: 'u3',
+      id: 'TR-12112026-0003',
+      job_no: 'TR-12112026-0003',
+      lift_id: 'P3',
+      from_floor: '1',
+      to_floor: '4',
+      sender_id: 'NV001',
+      receiver_id: 'NV003',
       status: 'ARRIVED',
       created_at: new Date(Date.now() - 35 * 60000).toISOString(),
       arrived_at: new Date(Date.now() - 4 * 60000).toISOString(),
@@ -1770,17 +1831,17 @@ const initialMockDbData = {
   jobTimeline: [
     {
       id: 't1',
-      job_id: 'j1',
+      job_id: 'TR-12112026-0001',
       status: 'CREATED',
-      action_by: 'u1',
+      action_by: 'NV001',
       action_time: new Date(Date.now() - 5 * 60000).toISOString(),
       remark: 'Khởi tạo đơn vận chuyển'
     },
     {
       id: 't2',
-      job_id: 'j1',
+      job_id: 'TR-12112026-0001',
       status: 'MOVING',
-      action_by: 'u1',
+      action_by: 'NV001',
       action_time: new Date(Date.now() - 2 * 60000).toISOString(),
       remark: 'Tời 06 chuyển sang trạng thái di chuyển'
     }
@@ -1789,10 +1850,10 @@ const initialMockDbData = {
   telegramLogs: [
     {
       id: 101,
-      job_id: 'j4',
-      user_id: 'u1',
+      job_id: 'TR-12112026-0003',
+      user_id: 'NV001',
       telegram_chat_id: '-1002145892305',
-      message: '🚨 CẢNH BÁO TỒN ĐỌNG HÀNG: Tời 03 tại Tầng 4 chờ dỡ quá 4m30s',
+      message: '🚨 CẢNH BÁO TỒN ĐỌNG HÀNG: Thang P3 tại Tầng 4 chờ dỡ quá 4m30s',
       status: 'SUCCESS',
       sent_time: new Date(Date.now() - 4 * 60000).toISOString()
     }
@@ -1801,11 +1862,11 @@ const initialMockDbData = {
   activityLogs: [
     {
       id: 201,
-      user_id: 'u1',
+      user_id: 'NV001',
       action: 'CREATE_JOB',
       table_name: 'transport_jobs',
-      record_id: 'j1',
-      description: 'Nguyễn Văn Hùng đã tạo đơn hỏa tốc #TR-8994',
+      record_id: 'TR-12112026-0001',
+      description: 'Nguyễn Văn Hùng đã tạo đơn hỏa tốc #TR-12112026-0001',
       created_at: new Date(Date.now() - 5 * 60000).toISOString(),
       event_type: 'JOB_EVENT'
     }
@@ -1820,7 +1881,7 @@ const initialMockDbData = {
       value_type: 'STRING',
       description: 'HTTP API Token kết nối Telegram Bot',
       updated_at: new Date().toISOString(),
-      updated_by: 'u1'
+      updated_by: 'NV001'
     },
     {
       id: 2,
@@ -1830,29 +1891,29 @@ const initialMockDbData = {
       value_type: 'NUMBER',
       description: 'Thời gian chờ dỡ hàng tối đa trước khi bắn chuông Telegram (giây)',
       updated_at: new Date().toISOString(),
-      updated_by: 'u1'
+      updated_by: 'NV001'
     }
   ] as DbSystemSetting[],
 
   notifications: [
     {
       id: 'notif-1',
-      job_id: 'j4',
+      job_id: 'TR-12112026-0003',
       notification_type: 'UNCOLLECTED_CARGO_WARNING',
-      receiver_id: 'u3',
-      title: '🚨 Cảnh Báo Tồn Đọng Tời 03',
-      message: 'Hàng hóa tại Tầng 4 trên Tời 03 chưa được dỡ xuống quá 4 phút 30 giây.',
+      receiver_id: 'NV003',
+      title: '🚨 Cảnh Báo Tồn Đọng Thang P3',
+      message: 'Hàng hóa tại Tầng 4 trên Thang P3 chưa được dỡ xuống quá 4 phút 30 giây.',
       status: 'SENT',
       created_at: new Date(Date.now() - 4 * 60000).toISOString(),
       sent_at: new Date(Date.now() - 4 * 60000).toISOString()
     },
     {
       id: 'notif-2',
-      job_id: 'j1',
+      job_id: 'TR-12112026-0001',
       notification_type: 'JOB_ARRIVED',
-      receiver_id: 'u3',
+      receiver_id: 'NV003',
       title: '📦 Đơn Tời Đang Đến Tầng 4',
-      message: 'Đơn hàng #TR-8994 (12 thùng linh kiện K2) đang chuyển đến Tầng 4.',
+      message: 'Đơn hàng #TR-12112026-0001 (12 thùng linh kiện K2) đang chuyển đến Tầng 4.',
       status: 'READ',
       created_at: new Date(Date.now() - 2 * 60000).toISOString(),
       sent_at: new Date(Date.now() - 2 * 60000).toISOString()
@@ -1860,7 +1921,7 @@ const initialMockDbData = {
   ] as DbNotification[]
 };
 
-const DB_STORAGE_KEY = 'liftflow_db_store_v2';
+const DB_STORAGE_KEY = 'liftflow_db_store_v3';
 
 const loadMockDbData = (): typeof initialMockDbData => {
   try {

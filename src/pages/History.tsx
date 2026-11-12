@@ -18,10 +18,11 @@ export const HistoryPage: React.FC = () => {
 
   // Filter activities
   const filteredActivities = activities.filter((act) => {
-    const matchesSearch = 
-      act.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      act.user_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (act.entity_id && act.entity_id.toLowerCase().includes(searchTerm.toLowerCase()));
+    const q = (searchTerm || '').toLowerCase();
+    const desc = String(act.description || '').toLowerCase();
+    const uId = String(act.user_id || '').toLowerCase();
+    const entId = String(act.entity_id || '').toLowerCase();
+    const matchesSearch = desc.includes(q) || uId.includes(q) || entId.includes(q);
 
     const matchesCategory = selectedCategory === 'ALL' || act.action === selectedCategory;
 
@@ -250,9 +251,9 @@ export const HistoryPage: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  {act.entity_id && (!act.entity_id.includes('-') || act.entity_id.length < 20) && (
+                  {act.entity_id && (!String(act.entity_id).includes('-') || String(act.entity_id).length < 20) && (
                     <span className="hidden sm:inline px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded text-[11px] font-mono font-bold text-slate-500 dark:text-slate-400">
-                      #{act.entity_id.replace(/^#/, '')}
+                      #{String(act.entity_id).replace(/^#/, '')}
                     </span>
                   )}
                   <ChevronRight className="w-4 h-4 text-slate-400" />

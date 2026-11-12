@@ -1,6 +1,6 @@
 {
-  "name": "Remix Warehouse-Lift-Dispatch-System-v2.0",
-  "description": "Imported from GitHub: HungNT91/Warehouse-Lift-Dispatch-System-v2.0",
+  "name": "Warehouse Lift Dispatch System",
+  "description": "Warehouse Lift Dispatch System for managing warehouse lifts, transport jobs, floor assignments, and notifications.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

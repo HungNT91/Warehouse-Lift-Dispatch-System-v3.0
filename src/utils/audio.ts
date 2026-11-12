@@ -35,13 +35,29 @@ if (typeof window !== 'undefined') {
   window.addEventListener('touchstart', unlockAudio);
 }
 
-// Global cache to prevent duplicate speech announcements within 12 seconds
+// Global cache to prevent duplicate speech announcements within 6 seconds
 const recentSpokenTexts = new Map<string, number>();
 
 /**
- * Text-to-Speech (TTS) voice announcement in Vietnamese
+ * Format lift name naturally for Vietnamese voice synthesis (avoids duplicate P bug like 'Thang PP1')
  */
-export function speakText(text: string) {
+export function formatLiftNameForSpeech(rawName: string): string {
+  if (!rawName) return 'Thang P1';
+  let s = String(rawName).trim();
+  s = s.replace(/^Lift\s*/i, 'Thang ');
+  s = s.replace(/^Tời\s*/i, 'Thang ');
+  if (/^Thang\s*/i.test(s)) {
+    return s;
+  }
+  return `Thang ${s}`;
+}
+
+/**
+ * Text-to-Speech (TTS) voice announcement in Vietnamese
+ * @param text The message string to speak
+ * @param force If true, bypasses the 6-second deduplication cache (useful for test buttons)
+ */
+export function speakText(text: string, force: boolean = false) {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
     return;
   }
@@ -64,9 +80,9 @@ export function speakText(text: string) {
   const now = Date.now();
   const lastSpokenTime = recentSpokenTexts.get(normKey) || 0;
 
-  // Chặn hoàn toàn nếu câu nói giống nhau được gọi lại trong vòng 12 giây
-  if (now - lastSpokenTime < 12000) {
-    console.info('[TTS] Bỏ qua câu thông báo trùng lặp trong 12s:', cleanText);
+  // Chặn phát trùng lặp nếu câu giống nhau được gọi liên tiếp trong vòng 6 giây (trừ khi ấn nút Test)
+  if (!force && now - lastSpokenTime < 6000) {
+    console.info('[TTS] Bỏ qua câu thông báo trùng lặp trong 6s:', cleanText);
     return;
   }
   recentSpokenTexts.set(normKey, now);
@@ -94,12 +110,28 @@ export function speakText(text: string) {
         utterance.pitch = 1.0;
         utterance.volume = 1.0;
 
+        utterance.onend = () => {
+          (window as any).__lastSpeechUtterance = null;
+        };
+        utterance.onerror = (e) => {
+          console.warn('[TTS] Speech error or interrupted:', e);
+          (window as any).__lastSpeechUtterance = null;
+        };
+
         // Prevent Chromium GC bug by pinning utterance to global window
         (window as any).__lastSpeechUtterance = utterance;
 
+        let hasSpoken = false;
         const assignVoiceAndPlay = () => {
+          if (hasSpoken) return;
+          hasSpoken = true;
+
           const voices = window.speechSynthesis.getVoices();
-          const viVoice = voices.find(v => v.lang.includes('vi') || v.lang.includes('VI'));
+          const viVoice = voices.find(v => 
+            v.lang.toLowerCase().includes('vi') || 
+            v.name.toLowerCase().includes('vietnam') ||
+            v.name.toLowerCase().includes('vietnamese')
+          );
           if (viVoice) {
             utterance.voice = viVoice;
           }
@@ -112,8 +144,8 @@ export function speakText(text: string) {
             assignVoiceAndPlay();
           };
           window.speechSynthesis.addEventListener('voiceschanged', handleVoices);
-          // Fallback if event does not trigger
-          setTimeout(assignVoiceAndPlay, 100);
+          // Fallback if voiceschanged event does not trigger in 120ms
+          setTimeout(assignVoiceAndPlay, 120);
         } else {
           assignVoiceAndPlay();
         }
@@ -122,12 +154,12 @@ export function speakText(text: string) {
       }
     };
 
-    // If currently speaking, cancel and delay 80ms to avoid Chromium cancel/speak bug
+    // If currently speaking, cancel and delay slightly to avoid Chromium cancel/speak conflict
     if (window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel();
-      setTimeout(doSpeak, 80);
+      setTimeout(doSpeak, 100);
     } else {
-      setTimeout(doSpeak, 250); // slight pause after chime
+      setTimeout(doSpeak, 200); // slight pause after chime
     }
   } catch (err) {
     console.warn('SpeechSynthesis error:', err);
@@ -137,19 +169,19 @@ export function speakText(text: string) {
 /**
  * Announcement when a lift arrives at a target floor with goods
  */
-export function speakLiftArrival(liftName: string, floor: number) {
-  const formattedLift = liftName.replace(/^Lift\s*/i, 'Thang P').replace(/^Tời\s*/i, 'Thang P');
+export function speakLiftArrival(liftName: string, floor: number, force: boolean = false) {
+  const formattedLift = formatLiftNameForSpeech(liftName);
   const message = `Thông báo, ${formattedLift} đã vận chuyển hàng đến Tầng ${floor}. Yêu cầu nhân viên điều phối kho Tầng ${floor} kiểm tra kéo hàng!`;
-  speakText(message);
+  speakText(message, force);
 }
 
 /**
  * Warning announcement when cargo remains uncollected after 2 minutes (120s)
  */
-export function speakUncollectedWarning(liftName: string, floor: number, minutes: number = 2) {
-  const formattedLift = liftName.replace(/^Lift\s*/i, 'Thang P').replace(/^Tời\s*/i, 'Thang P');
+export function speakUncollectedWarning(liftName: string, floor: number, minutes: number = 2, force: boolean = false) {
+  const formattedLift = formatLiftNameForSpeech(liftName);
   const message = `Cảnh báo! ${formattedLift} tại Tầng ${floor} chưa được kéo hàng quá ${minutes} phút. Yêu cầu điều phối kho Tầng ${floor} khẩn trương kéo hàng!`;
-  speakText(message);
+  speakText(message, force);
 }
 
 /**
