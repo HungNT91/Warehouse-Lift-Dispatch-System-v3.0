@@ -198,7 +198,13 @@ export const LiftCard: React.FC<LiftCardProps> = ({ lift }) => {
     }
 
     if (lift.current_job_id) {
-      updateJob(lift.current_job_id, { status: 'COMPLETED' });
+      const currentEmpId = user?.employee_code || user?.id || '';
+      const currentEmpName = user?.full_name || '';
+      updateJob(lift.current_job_id, {
+        status: 'COMPLETED',
+        receiver_id: currentEmpId,
+        receiver_name: currentEmpName
+      });
     }
 
     if (returnToSource && lift.source_floor && lift.source_floor !== lift.current_floor) {

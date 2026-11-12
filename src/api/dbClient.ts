@@ -1866,9 +1866,49 @@ const initialMockDbData = {
       action: 'CREATE_JOB',
       table_name: 'transport_jobs',
       record_id: 'TR-12112026-0001',
-      description: 'Nguyễn Văn Hùng đã tạo đơn hỏa tốc #TR-12112026-0001',
+      description: 'Nguyễn Văn Hùng đã tạo đơn hỏa tốc #TR-12112026-0001 (T1 ➔ T4)',
       created_at: new Date(Date.now() - 5 * 60000).toISOString(),
       event_type: 'JOB_EVENT'
+    },
+    {
+      id: 202,
+      user_id: 'system',
+      action: 'LIFT_ARRIVAL',
+      table_name: 'lifts',
+      record_id: 'P3',
+      description: 'Thang P3 đã cập bến Tầng 4 thành công (Chờ kéo hàng)',
+      created_at: new Date(Date.now() - 8 * 60000).toISOString(),
+      event_type: 'SYSTEM_EVENT'
+    },
+    {
+      id: 203,
+      user_id: 'NV002',
+      action: 'COMPLETE_JOB',
+      table_name: 'transport_jobs',
+      record_id: 'TR-12112026-0002',
+      description: 'Trần Văn Hùng xác nhận đã lấy hàng hoàn tất đơn #TR-12112026-0002 tại Tầng 1',
+      created_at: new Date(Date.now() - 15 * 60000).toISOString(),
+      event_type: 'JOB_EVENT'
+    },
+    {
+      id: 204,
+      user_id: 'NV001',
+      action: 'ASSIGN_SHIFT',
+      table_name: 'daily_assignments',
+      record_id: 'P3',
+      description: 'Phân công ca trực: Phạm Lan Trang phụ trách Thang P3 - Tầng 3',
+      created_at: new Date(Date.now() - 35 * 60000).toISOString(),
+      event_type: 'ASSIGNMENT_EVENT'
+    },
+    {
+      id: 205,
+      user_id: 'NV001',
+      action: 'SET_STATUS_MAINTENANCE',
+      table_name: 'lifts',
+      record_id: 'P5',
+      description: 'Chuyển Thang P5 sang trạng thái Bảo trì kỹ thuật định kỳ',
+      created_at: new Date(Date.now() - 60 * 60000).toISOString(),
+      event_type: 'SYSTEM_EVENT'
     }
   ] as DbActivityLog[],
 
@@ -1929,7 +1969,11 @@ const loadMockDbData = (): typeof initialMockDbData => {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (parsed && typeof parsed === 'object') {
-        return { ...initialMockDbData, ...parsed };
+        const merged = { ...initialMockDbData, ...parsed };
+        if (!Array.isArray(merged.activityLogs) || merged.activityLogs.length === 0) {
+          merged.activityLogs = initialMockDbData.activityLogs;
+        }
+        return merged;
       }
     }
   } catch (e) {

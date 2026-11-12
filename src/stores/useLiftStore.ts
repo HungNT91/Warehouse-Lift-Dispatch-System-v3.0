@@ -208,7 +208,12 @@ function processLiftsAndJobs(
     const cleanSenderId = String(j.sender_id || '').trim().replace(/^'/, '');
     const creatorName = (cleanSenderId && userMap[cleanSenderId])
       || (j.sender_id && userMap[j.sender_id])
-      || 'Nhân viên kho';
+      || (cleanSenderId ? cleanSenderId : 'Nhân viên kho');
+
+    const cleanReceiverId = j.receiver_id ? String(j.receiver_id).trim().replace(/^'/, '') : '';
+    const receiverName = (cleanReceiverId && userMap[cleanReceiverId])
+      || (j.receiver_id && userMap[j.receiver_id])
+      || (cleanReceiverId ? cleanReceiverId : undefined);
 
     return {
       id: j.id,
@@ -217,6 +222,8 @@ function processLiftsAndJobs(
       lift_number: dbLifts.find(l => l.id === j.lift_id || l.lift_code === j.lift_id)?.lift_name || j.lift_id || 'Thang P1',
       created_by: cleanSenderId || 'u1',
       creator_name: creatorName,
+      receiver_id: cleanReceiverId || undefined,
+      receiver_name: receiverName,
       source_floor: parseFloorWithMap(j.from_floor, floorMap),
       target_floor: parseFloorWithMap(j.to_floor, floorMap),
       status: (j.status as any) || 'CREATED',
@@ -360,6 +367,93 @@ function processLiftsAndJobs(
   return { mergedLifts, mappedJobs: finalMergedJobs };
 }
 
+function generateActivityDescription(
+  a: any,
+  cleanDesc: string,
+  displayEntityId: string,
+  displayUserName: string
+): string {
+  if (cleanDesc && cleanDesc.trim().length > 0) {
+    return cleanDesc.trim();
+  }
+
+  // Tổng hợp mô tả thao tác dựa trên action, table_name, record_id và user
+  const act = String(a.action || a.event_type || '').toUpperCase().trim();
+  const table = String(a.table_name || '').toLowerCase().trim();
+  const target = displayEntityId ? (displayEntityId.startsWith('#') ? displayEntityId : `#${displayEntityId}`) : '';
+
+  if (act.includes('CREATE_JOB') || act.includes('NEW_JOB')) {
+    return `Tạo mới đơn vận chuyển ${target || 'hàng hóa'}`;
+  }
+  if (act.includes('COMPLETE_JOB')) {
+    return `Xác nhận hoàn thành giao nhận đơn ${target}`;
+  }
+  if (act.includes('CANCEL_JOB')) {
+    return `Đã hủy đơn vận chuyển ${target}`;
+  }
+  if (act.includes('UPDATE_JOB')) {
+    return `Cập nhật trạng thái đơn vận chuyển ${target}`;
+  }
+  if (act.includes('ASSIGN_SHIFT') || act.includes('ASSIGN_FLOOR') || table.includes('assignment')) {
+    return `Phân công nhân viên phụ trách ${displayEntityId ? `Thang/Tầng ${displayEntityId}` : 'ca trực'}`;
+  }
+  if (act.includes('RESTRICT_FLOOR') || act.includes('LIMIT_FLOOR')) {
+    return `Thiết lập giới hạn tầng hoạt động cho thang ${displayEntityId || ''}`;
+  }
+  if (act.includes('RESET_FLOOR_RESTRICTION') || act.includes('RESET_RESTRICTION')) {
+    return `Giải phóng giới hạn tầng hoạt động cho thang ${displayEntityId || ''}`;
+  }
+  if (act.includes('EMERGENCY_STOP')) {
+    return `Kích hoạt DỪNG KHẨN CẤP thang ${displayEntityId || ''}`;
+  }
+  if (act.includes('RESUME_LIFT') || act.includes('RESUME')) {
+    return `Khôi phục vận hành cho thang ${displayEntityId || ''}`;
+  }
+  if (act.includes('LIFT_ARRIVAL') || act.includes('ARRIVAL')) {
+    return `Thang ${displayEntityId || 'tời'} đã cập bến tầng`;
+  }
+  if (act.includes('LOCK')) {
+    return `Khóa vận hành thang ${displayEntityId || ''}`;
+  }
+  if (act.includes('UNLOCK')) {
+    return `Mở khóa vận hành thang ${displayEntityId || ''}`;
+  }
+  if (act.includes('MOVE') || act.includes('CALL')) {
+    return `Điều khiển di chuyển thang ${displayEntityId || ''}`;
+  }
+  if (act.includes('SETTING') || act.includes('CONFIG') || table.includes('setting')) {
+    return `Cập nhật thiết lập tham số hệ thống`;
+  }
+  if (act.includes('CREATE_USER')) {
+    return `Thêm tài khoản nhân viên mới ${displayEntityId || ''}`;
+  }
+  if (act.includes('UPDATE_USER') || act.includes('UPDATE_ACCOUNT')) {
+    return `Cập nhật hồ sơ tài khoản nhân viên ${displayEntityId || ''}`;
+  }
+  if (act.includes('DELETE_USER')) {
+    return `Xóa tài khoản nhân viên ${displayEntityId || ''}`;
+  }
+  if (act.includes('LOGIN')) {
+    return `Đăng nhập vào hệ thống`;
+  }
+  if (act.includes('LOGOUT')) {
+    return `Đăng xuất khỏi hệ thống`;
+  }
+  if (table.includes('transport_job')) {
+    return `Thao tác đơn vận chuyển ${target}`;
+  }
+  if (table.includes('lift')) {
+    return `Thao tác điều khiển thang tời ${displayEntityId || ''}`;
+  }
+  if (table.includes('user')) {
+    return `Quản lý người dùng ${displayEntityId || ''}`;
+  }
+  if (act) {
+    return `Thao tác: ${act} ${target}`;
+  }
+  return `Thao tác vận hành hệ thống`;
+}
+
 function processActivities(
   dbActivities: any[],
   dbUsers: any[],
@@ -367,7 +461,7 @@ function processActivities(
   dbLifts: any[],
   userMap: Record<string, string>
 ): ActivityLog[] {
-  return dbActivities.map(a => {
+  return (dbActivities || []).map(a => {
     // Resolve user display name
     let displayUserName = 'Hệ Thống';
     const rawUserId = a.user_id !== undefined && a.user_id !== null ? String(a.user_id).trim() : '';
@@ -413,8 +507,11 @@ function processActivities(
       }
     }
 
+    // Extract description from standard and alternate Google Sheet/database column keys
+    let rawDescription = a.description || a.noi_dung || a.noi_dung_thao_tac || a.thao_tac || a.details || a.message || a.remark || a.note || a.action_desc || '';
+
     // Sanitize any raw UUID strings inside description
-    let cleanDescription = a.description || '';
+    let cleanDescription = rawDescription ? String(rawDescription) : '';
     const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi;
     cleanDescription = cleanDescription.replace(uuidPattern, (uuidStr) => {
       const matchedJob = dbJobs.find(j => j.id === uuidStr);
@@ -426,22 +523,54 @@ function processActivities(
       return 'đối tượng';
     });
 
+    // Tự động bổ sung mô tả chi tiết nếu dữ liệu đầu vào thiếu trường description
+    cleanDescription = generateActivityDescription(a, cleanDescription, displayEntityId, displayUserName);
+
     // Determine badge action category
-    const actLower = (a.action || '').toLowerCase();
+    const actLower = (a.action || a.event_type || a.table_name || '').toLowerCase();
     let catAction = 'system';
     if (actLower.includes('job') || actLower.includes('order')) catAction = 'job';
-    else if (actLower.includes('assign')) catAction = 'assignment';
-    else if (actLower.includes('alert') || actLower.includes('stop') || actLower.includes('warning')) catAction = 'alert';
+    else if (actLower.includes('assign') || actLower.includes('shift')) catAction = 'assignment';
+    else if (actLower.includes('alert') || actLower.includes('stop') || actLower.includes('warning') || actLower.includes('lock')) catAction = 'alert';
+    else if (actLower.includes('user') || actLower.includes('account')) catAction = 'user';
+    else if (actLower.includes('setting') || actLower.includes('config')) catAction = 'setting';
+    else if (actLower.includes('lift')) catAction = 'lift';
+
+    // Format timestamp reliably
+    let formattedTime = 'Vừa xong';
+    let rawEpoch = 0;
+    if (a.created_at) {
+      const rawTimeStr = String(a.created_at).trim();
+      const d = new Date(rawTimeStr);
+      if (!isNaN(d.getTime())) {
+        rawEpoch = d.getTime();
+      }
+      if (/^\d{1,2}:\d{2}(\s*(AM|PM))?$/i.test(rawTimeStr)) {
+        formattedTime = rawTimeStr;
+      } else if (!isNaN(d.getTime())) {
+        formattedTime = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } else {
+        formattedTime = rawTimeStr;
+      }
+    }
 
     return {
       id: String(a.id),
       user_id: displayUserName,
       action: catAction,
-      entity: a.table_name,
+      entity: a.table_name || 'system',
       entity_id: displayEntityId,
       description: cleanDescription,
-      created_at: a.created_at ? new Date(a.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Vừa xong'
+      created_at: formattedTime,
+      timestamp: rawEpoch || undefined
     };
+  }).sort((x, y) => {
+    const tX = x.timestamp || 0;
+    const tY = y.timestamp || 0;
+    if (tX && tY && tX !== tY) return tY - tX;
+    const numX = parseInt(String(x.id).replace(/\D/g, ''), 10) || 0;
+    const numY = parseInt(String(y.id).replace(/\D/g, ''), 10) || 0;
+    return numY - numX;
   });
 }
 
@@ -626,18 +755,38 @@ export const useLiftStore = create<LiftState>((set, get) => ({
 
     // Save to DB
     const isCompleted = updates.status === 'COMPLETED';
-    const completedAt = isCompleted ? new Date().toISOString() : undefined;
+    const completedAt = isCompleted ? (updates.completed_at || new Date().toISOString()) : undefined;
+
+    // Xác định nhân viên thực hiện thao tác nhận hàng (Ví dụ: ID 00133 nhận hàng từ ID 00334)
+    const currentAuthUser = useAuthStore.getState().user;
+    const resolvedReceiverId = updates.receiver_id 
+      || (isCompleted ? (currentAuthUser?.employee_code || currentAuthUser?.id || '') : (targetJob?.receiver_id || ''));
+    const resolvedReceiverName = updates.receiver_name 
+      || (isCompleted ? (currentAuthUser?.full_name || (_cachedUserMap[resolvedReceiverId]) || resolvedReceiverId) : (targetJob?.receiver_name || ''));
 
     await db.transportJobs.update(realId, {
       ...(updates.status ? { status: updates.status as any } : {}),
       ...(updates.notes !== undefined ? { remark: updates.notes } : {}),
-      ...(completedAt ? { completed_at: completedAt } : {})
+      ...(completedAt ? { completed_at: completedAt } : {}),
+      ...(resolvedReceiverId ? { receiver_id: resolvedReceiverId } : {})
     }).catch(console.error);
 
     if (updates.status && targetJob && updates.status !== targetJob.status) {
       let logDesc = `Cập nhật công việc #${code}: ${updates.status}`;
+      let actionActorId = targetJob.created_by || 'system';
+      let actionActorName = targetJob.creator_name || 'Nhân viên kho';
+
       if (updates.status === 'COMPLETED') {
-        logDesc = `Đã hoàn thành công việc #${code} (Kéo hàng tại Tầng ${targetJob.target_floor})`;
+        const receiverLabel = resolvedReceiverName 
+          ? (resolvedReceiverId ? `${resolvedReceiverName} (${resolvedReceiverId})` : resolvedReceiverName)
+          : (resolvedReceiverId || 'Nhân viên');
+        const senderLabel = targetJob.creator_name 
+          ? (targetJob.created_by ? `${targetJob.creator_name} (${targetJob.created_by})` : targetJob.creator_name)
+          : targetJob.created_by;
+
+        logDesc = `${receiverLabel} đã xác nhận lấy hàng đơn #${code} tại Tầng ${targetJob.target_floor}${senderLabel ? ` (do ${senderLabel} gửi)` : ''}`;
+        actionActorId = resolvedReceiverId || actionActorId;
+        actionActorName = receiverLabel;
       } else if (updates.status === 'WAITING_PICKUP') {
         logDesc = `Công việc #${code} đã tới Tầng ${targetJob.target_floor} (Chờ kéo hàng)`;
       } else if ((updates.status as string) === 'MOVING') {
@@ -645,7 +794,7 @@ export const useLiftStore = create<LiftState>((set, get) => ({
       }
 
       await db.activityLogs.add({
-        user_id: targetJob.created_by || 'system',
+        user_id: actionActorId,
         action: updates.status === 'COMPLETED' ? 'COMPLETE_JOB' : 'UPDATE_JOB',
         table_name: 'transport_jobs',
         record_id: isUuid(realId) ? realId : code,
@@ -656,18 +805,19 @@ export const useLiftStore = create<LiftState>((set, get) => ({
       await db.jobTimeline.create({
         job_id: realId,
         status: updates.status,
-        action_by: targetJob.created_by || 'system',
+        action_by: actionActorId,
         remark: logDesc
       }).catch(console.error);
 
       const newActivity: ActivityLog = {
         id: `act-${Date.now()}`,
-        user_id: targetJob.creator_name || 'Nhân viên kho',
+        user_id: actionActorName,
         action: 'job',
         entity: 'transport_jobs',
         entity_id: code,
         description: logDesc,
-        created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        timestamp: Date.now()
       };
 
       set((state) => ({
@@ -681,6 +831,7 @@ export const useLiftStore = create<LiftState>((set, get) => ({
           ? {
               ...job,
               ...updates,
+              ...(isCompleted && resolvedReceiverId ? { receiver_id: resolvedReceiverId, receiver_name: resolvedReceiverName } : {}),
               ...(completedAt ? { completed_at: completedAt } : {}),
               updated_at: new Date().toISOString()
             }
@@ -867,12 +1018,15 @@ export const useLiftStore = create<LiftState>((set, get) => ({
   })),
 
   addActivity: (activityData) => {
+    const rawDesc = activityData.description ? String(activityData.description).trim() : '';
+    const safeDesc = rawDesc || `Thao tác ${activityData.action || 'hệ thống'}${activityData.entity_id ? ` (#${activityData.entity_id})` : ''}`;
+
     db.activityLogs.add({
       user_id: activityData.user_id || 'u1',
       action: activityData.action.toUpperCase(),
       table_name: activityData.entity || 'system',
       record_id: activityData.entity_id || '',
-      description: activityData.description,
+      description: safeDesc,
       event_type: 'SYSTEM_EVENT'
     }).catch(console.error);
 
@@ -881,6 +1035,7 @@ export const useLiftStore = create<LiftState>((set, get) => ({
         {
           id: `act-${Date.now()}`,
           ...activityData,
+          description: safeDesc,
           created_at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         },
         ...state.activities

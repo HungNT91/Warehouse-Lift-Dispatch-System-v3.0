@@ -318,9 +318,15 @@ export const LiftDetailsModal: React.FC<LiftDetailsModalProps> = ({
                           <ArrowRight className="w-3 h-3 text-slate-400" />
                           <span>Tầng {job.target_floor}</span>
                         </div>
-                        <p className="text-[10px] text-slate-400 mt-0.5">
-                          {job.creator_name} • {new Date(job.created_at).toLocaleString('vi-VN')}
-                        </p>
+                        <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                          <span><span className="font-semibold text-slate-700 dark:text-slate-300">Gửi:</span> {job.creator_name || job.created_by}</span>
+                          {(job.receiver_name || job.receiver_id) && (
+                            <span className="text-emerald-600 dark:text-emerald-400">
+                              <span className="font-semibold">Nhận:</span> {job.receiver_name || job.receiver_id}
+                            </span>
+                          )}
+                          <span className="text-slate-400">• {new Date(job.created_at).toLocaleString('vi-VN')}</span>
+                        </div>
                       </div>
                     </div>
                     <span className={cn(

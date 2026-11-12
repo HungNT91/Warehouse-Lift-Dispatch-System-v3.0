@@ -65,6 +65,8 @@ export type Job = {
   lift_number?: string;
   created_by: string;
   creator_name?: string;
+  receiver_id?: string;
+  receiver_name?: string;
   source_floor: number;
   target_floor: number;
   status: JobStatus;
@@ -109,6 +111,7 @@ export type ActivityLog = {
   entity_id: string;
   description: string;
   created_at: string;
+  timestamp?: number;
 };
 
 export type ApiResponse<T> = {

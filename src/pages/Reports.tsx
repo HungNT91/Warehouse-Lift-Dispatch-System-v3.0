@@ -691,7 +691,7 @@ export function Reports() {
                 <th className="py-3 px-4">Tời</th>
                 <th className="py-3 px-4">Lộ Trình</th>
                 <th className="py-3 px-4">Loại Hàng & SL</th>
-                <th className="py-3 px-4">Người Khởi Tạo</th>
+                <th className="py-3 px-4">Giao / Nhận</th>
                 <th className="py-3 px-4">Thời Gian</th>
                 <th className="py-3 px-4 text-right">Trạng Thái</th>
               </tr>
@@ -736,7 +736,14 @@ export function Reports() {
                       <div className="text-xs text-slate-400">Số lượng: {job.quantity || 1}</div>
                     </td>
                     <td className="py-3.5 px-4 text-slate-600 dark:text-slate-400 text-xs">
-                      {job.creator_name || 'Nhân viên kho'}
+                      <div><span className="font-semibold text-slate-700 dark:text-slate-300">Gửi:</span> {job.creator_name || job.created_by}</div>
+                      {job.receiver_name || job.receiver_id ? (
+                        <div className="text-emerald-600 dark:text-emerald-400 mt-0.5 font-medium">
+                          <span className="font-semibold">Nhận:</span> {job.receiver_name || job.receiver_id}
+                        </div>
+                      ) : (
+                        <div className="text-slate-400 text-[10px] mt-0.5 italic">Chờ lấy hàng</div>
+                      )}
                     </td>
                     <td className="py-3.5 px-4 text-slate-500 text-xs">
                       {job.created_at

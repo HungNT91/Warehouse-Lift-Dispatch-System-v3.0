@@ -122,7 +122,7 @@ export function broadcastLiftArrival(
   toast.info(`🔔 ${notifTitle}`, { duration: 5000 });
 
   if (canSpeakHere) {
-    speakText(messageText, false, false);
+    speakText(messageText, false);
   }
 }
 
@@ -214,7 +214,7 @@ export function broadcastUncollectedWarning(
   toast.warning(`🚨 ${notifTitle}`, { duration: 6000 });
 
   if (canSpeakHere) {
-    speakText(messageText, false, true);
+    speakText(messageText, false);
   }
 }
 
