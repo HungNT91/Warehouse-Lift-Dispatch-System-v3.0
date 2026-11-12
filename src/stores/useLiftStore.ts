@@ -7,7 +7,7 @@ import { speakLiftArrival } from '../utils/audio';
 import { isSameLift, safeParseTimestamp, getLocalDateString, getEffectiveAllowedFloors } from '../utils/time';
 import { getStoredRestrictionForLift, saveStoredFloorRestriction } from '../utils/floorRestrictions';
 import { broadcastLiftArrival } from '../utils/liftBroadcast';
-import { markLocalAction } from '../utils/syncLock';
+import { markLocalAction, markLiftLocalStatus, getLiftLocalStatus } from '../utils/syncLock';
 
 interface LiftState {
   lifts: Lift[];
@@ -325,6 +325,26 @@ function processLiftsAndJobs(
     }
 
     if (localLift.status === 'WAITING_PICKUP') {
+      // Kiểm tra xem người dùng vừa xác nhận lấy hàng (trạng thái local đã chuyển sang AVAILABLE/MOVING)
+      // nhưng DB chưa kịp cập nhật → ưu tiên trạng thái local để tránh giật về WAITING_PICKUP
+      const forcedLocalStatus = getLiftLocalStatus(localLift.id) || getLiftLocalStatus(dbLift.id);
+      if (forcedLocalStatus && (forcedLocalStatus === 'AVAILABLE' || forcedLocalStatus === 'MOVING')) {
+        // Trạng thái local vẫn còn hiệu lực — giữ nguyên trạng thái mà user vừa set
+        return {
+          ...dbLift,
+          status: forcedLocalStatus as any,
+          pickup_start_time: null,
+          current_job_id: forcedLocalStatus === 'AVAILABLE' ? null : dbLift.current_job_id,
+          source_floor: forcedLocalStatus === 'AVAILABLE' ? null : dbLift.source_floor,
+          operator: forcedLocalStatus === 'AVAILABLE' ? null : (localLift.operator || dbLift.operator || null),
+          allowed_floors: resolvedAllowedFloors,
+          restricted_by_user_id: resolvedRestrictedByUserId,
+          restricted_by_name: resolvedRestrictedByName,
+          restricted_at: resolvedRestrictedAt,
+          restriction_date: resolvedRestrictionDate,
+        };
+      }
+
       const hasWaitingJob = mappedJobs.some(j => checkSameLift(j.lift_id, dbLift.id) && j.status === 'WAITING_PICKUP');
 
       const newStatus = (dbLift.status === 'AVAILABLE' && !hasWaitingJob) ? 'AVAILABLE' : 'WAITING_PICKUP';
@@ -354,6 +374,20 @@ function processLiftsAndJobs(
       restricted_by_name: resolvedRestrictedByName,
       restricted_at: resolvedRestrictedAt,
       restriction_date: resolvedRestrictionDate,
+      // Nếu DB vẫn còn WAITING_PICKUP nhưng local đã xác nhận AVAILABLE/MOVING → giữ trạng thái local
+      ...(dbLift.status === 'WAITING_PICKUP' && (() => {
+        const forced = getLiftLocalStatus(localLift.id) || getLiftLocalStatus(dbLift.id);
+        if (forced && (forced === 'AVAILABLE' || forced === 'MOVING')) {
+          return {
+            status: forced as any,
+            pickup_start_time: null,
+            current_job_id: forced === 'AVAILABLE' ? null : dbLift.current_job_id,
+            source_floor: forced === 'AVAILABLE' ? null : dbLift.source_floor,
+            operator: forced === 'AVAILABLE' ? null : dbLift.operator,
+          };
+        }
+        return {};
+      })()),
     };
   });
 
@@ -602,6 +636,14 @@ export const useLiftStore = create<LiftState>((set, get) => ({
     markLocalAction(2500);
 
     const prevLift = get().lifts.find(l => l.id === liftId || l.lift_number === liftId);
+
+    // Khi xác nhận lấy hàng (WAITING_PICKUP → AVAILABLE/MOVING): đánh dấu trạng thái local
+    // trong 10s để merge DB không kéo ngược lại trạng thái cũ trong khi DB chưa kịp đồng bộ
+    if (updates.status && prevLift?.status === 'WAITING_PICKUP' &&
+        (updates.status === 'AVAILABLE' || updates.status === 'MOVING')) {
+      markLiftLocalStatus(liftId, updates.status, 10000);
+      markLocalAction(10000);
+    }
 
     // Save to DB (lifts table)
     const statusMap: Record<string, number> = {
