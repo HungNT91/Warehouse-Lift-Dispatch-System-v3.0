@@ -80,7 +80,8 @@ export const LiftCard: React.FC<LiftCardProps> = ({ lift }) => {
 
     if (lift.status === 'MOVING' && (lift.destination_floor || effectiveDestFloor)) {
       const destFloor = lift.destination_floor || effectiveDestFloor || lift.current_floor;
-      const floorsToTravel = Math.abs(destFloor - lift.current_floor) || 1;
+      const startFloor = lift.source_floor || lift.current_floor;
+      const floorsToTravel = Math.abs(destFloor - startFloor) || 1;
       const totalSeconds = floorsToTravel * 20; // 20 seconds per floor
       const increment = 100 / totalSeconds;
 
@@ -178,6 +179,7 @@ export const LiftCard: React.FC<LiftCardProps> = ({ lift }) => {
     updateLift(lift.id, {
       status: 'MOVING',
       source_floor: lift.current_floor,
+      current_floor: lift.current_floor,
       destination_floor: targetFloor,
       progress: 0,
       current_job_id: realJobId || null,
@@ -230,6 +232,7 @@ export const LiftCard: React.FC<LiftCardProps> = ({ lift }) => {
         status: 'MOVING',
         destination_floor: target,
         source_floor: lift.current_floor,
+        current_floor: lift.current_floor,
         pickup_start_time: null,
         progress: 0,
         current_job_id: returnJobId || null,
@@ -289,6 +292,7 @@ export const LiftCard: React.FC<LiftCardProps> = ({ lift }) => {
       status: 'MOVING',
       destination_floor: assignment.assigned_floor,
       source_floor: lift.current_floor,
+      current_floor: lift.current_floor,
       progress: 0,
       current_job_id: realJobId || null,
       operator: currentOperator
@@ -348,11 +352,12 @@ export const LiftCard: React.FC<LiftCardProps> = ({ lift }) => {
   const isWaitingPickup = lift.status === 'WAITING_PICKUP';
   const isStoppedOrBlocked = lift.status === 'STOPPED' || lift.status === 'MAINTENANCE' || lift.status === 'OFFLINE';
 
+  const startFloor = lift.source_floor || lift.current_floor;
   const displayFloor = isMoving && lift.destination_floor
-    ? Math.round(lift.current_floor + (lift.destination_floor - lift.current_floor) * (lift.progress / 100))
+    ? Math.round(startFloor + (lift.destination_floor - startFloor) * (lift.progress / 100))
     : lift.current_floor;
 
-  const isGoingUp = Boolean(isMoving && lift.destination_floor && lift.destination_floor > lift.current_floor);
+  const isGoingUp = Boolean(isMoving && lift.destination_floor && lift.destination_floor > startFloor);
 
   const direction = isMoving && lift.destination_floor
     ? (isGoingUp ? 'Đang đi lên' : 'Đang đi xuống')

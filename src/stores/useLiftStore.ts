@@ -107,23 +107,35 @@ function processLiftsAndJobs(
   userMap: Record<string, string>,
   floorMap: Record<string, number>
 ): { mergedLifts: Lift[]; mappedJobs: Job[] } {
+  // Sắp xếp các danh sách công việc theo thời gian tạo mới nhất lên đầu để luôn tìm thấy công việc gần nhất
+  const sortedDbJobs = [...dbJobs].sort((a, b) => safeParseTimestamp(b.created_at || 0) - safeParseTimestamp(a.created_at || 0));
+  const sortedCurrentJobs = [...currentJobs].sort((a, b) => safeParseTimestamp(b.created_at || 0) - safeParseTimestamp(a.created_at || 0));
+
   const mappedLifts: Lift[] = dbLifts.map(d => {
-    // Fallback robust active job matching
-    const activeJob = (d.current_job
-      ? (dbJobs.find(j => j.id === d.current_job || j.job_no === d.current_job || (j as any).code === d.current_job) ||
-        currentJobs.find(j => j.id === d.current_job || j.code === d.current_job))
-      : null) ||
-      dbJobs.find(j =>
-        (checkSameLift(j.lift_id, d.id) || checkSameLift(j.lift_id, d.lift_code) || checkSameLift(j.lift_id, d.lift_name)) &&
-        ['MOVING', 'WAITING_PICKUP', 'CREATED'].includes(j.status)
-      ) ||
-      currentJobs.find(j =>
-        (checkSameLift(j.lift_id, d.id) || checkSameLift(j.lift_id, d.lift_code) || checkSameLift(j.lift_id, d.lift_name)) &&
-        ['MOVING', 'WAITING_PICKUP', 'CREATED'].includes(j.status)
-      ) || null;
+    // Tìm activeJob với độ ưu tiên:
+    // 1. Khớp chính xác current_job nếu có
+    // 2. Việc có status MOVING mới nhất của thang này
+    // 3. Việc có status WAITING_PICKUP mới nhất của thang này
+    // 4. Việc có status CREATED mới nhất của thang này
+    const matchLift = (j: any) => checkSameLift(j.lift_id, d.id) || checkSameLift(j.lift_id, d.lift_code) || checkSameLift(j.lift_id, d.lift_name);
+
+    let activeJob: any = null;
+    if (d.current_job) {
+      activeJob = sortedDbJobs.find(j => j.id === d.current_job || j.job_no === d.current_job || (j as any).code === d.current_job)
+        || sortedCurrentJobs.find(j => j.id === d.current_job || j.code === d.current_job);
+    }
+    if (!activeJob) {
+      activeJob = sortedDbJobs.find(j => matchLift(j) && j.status === 'MOVING')
+        || sortedCurrentJobs.find(j => matchLift(j) && j.status === 'MOVING')
+        || sortedDbJobs.find(j => matchLift(j) && j.status === 'WAITING_PICKUP')
+        || sortedCurrentJobs.find(j => matchLift(j) && j.status === 'WAITING_PICKUP')
+        || sortedDbJobs.find(j => matchLift(j) && j.status === 'CREATED')
+        || sortedCurrentJobs.find(j => matchLift(j) && j.status === 'CREATED')
+        || null;
+    }
 
     const destFloor = activeJob ? parseFloorWithMap((activeJob as any).to_floor || (activeJob as any).target_floor, floorMap) : null;
-    const srcFloor = activeJob ? parseFloorWithMap((activeJob as any).from_floor || (activeJob as any).source_floor, floorMap) : null;
+    const srcFloor = activeJob ? parseFloorWithMap((activeJob as any).from_floor || (activeJob as any).source_floor, floorMap) : parseFloorWithMap(d.current_floor, floorMap);
     let liftStatus = (statusCodeMap[d.status_id || 1] as any) || 'AVAILABLE';
 
     // Direct status sync with active job status if active job exists
@@ -149,12 +161,24 @@ function processLiftsAndJobs(
     // Calculate progress dynamically based on time elapsed
     let computedProgress = 0;
     if (liftStatus === 'MOVING') {
-      const startTime = safeParseTimestamp(d.last_update);
+      const rawJobStartTime = (activeJob as any)?.created_at || (activeJob as any)?.updated_at || d.last_update;
+      const startTime = rawJobStartTime ? safeParseTimestamp(rawJobStartTime) : Date.now();
       const travelDist = (destFloor && srcFloor) ? Math.abs(destFloor - srcFloor) : 1;
-      const totalSecs = travelDist * 20; // 20s per floor
-      const elapsedSecs = Math.max(0, (Date.now() - startTime) / 1000);
-      const calcProg = Math.floor((elapsedSecs / totalSecs) * 100);
-      computedProgress = isNaN(calcProg) ? 0 : Math.min(99, Math.max(0, calcProg));
+      const totalSecs = (travelDist || 1) * 20; // 20s per floor
+      const diffMs = Date.now() - startTime;
+
+      let elapsedSecs = 0;
+      if (diffMs >= 0 && diffMs <= 3600 * 1000) {
+        elapsedSecs = diffMs / 1000;
+      }
+
+      if (elapsedSecs >= totalSecs) {
+        computedProgress = 100;
+      } else {
+        const calcProg = Math.floor((elapsedSecs / totalSecs) * 100);
+        // Trong khi chưa hết 20s di chuyển, cap tối đa 95% để animation chạy mượt mà
+        computedProgress = isNaN(calcProg) ? 0 : Math.min(95, Math.max(0, calcProg));
+      }
     } else if (liftStatus === 'WAITING_PICKUP') {
       computedProgress = 100;
     }
@@ -178,7 +202,7 @@ function processLiftsAndJobs(
       id: normalizedLiftId,
       lift_code: d.lift_code || null,
       lift_number: d.lift_name || d.lift_code || d.id,
-      current_floor: parseFloorWithMap(d.current_floor, floorMap),
+      current_floor: parseFloorWithMap(liftStatus === 'MOVING' ? (srcFloor || d.current_floor) : d.current_floor, floorMap),
       destination_floor: destFloor,
       source_floor: srcFloor,
       status: liftStatus,
@@ -303,7 +327,10 @@ function processLiftsAndJobs(
     }
 
     if (localLift.status === 'MOVING') {
-      const newStatus = (dbLift.status === 'WAITING_PICKUP' || dbLift.status === 'AVAILABLE') ? dbLift.status : 'MOVING';
+      // Khi thang đang MOVING ở local, chỉ chuyển sang WAITING_PICKUP hoặc AVAILABLE khi local đã hoàn thành 100% thời gian di chuyển
+      const newStatus = (dbLift.status === 'WAITING_PICKUP' || dbLift.status === 'AVAILABLE')
+        ? ((localLift.progress ?? 0) >= 100 ? dbLift.status : 'MOVING')
+        : 'MOVING';
       const validLocalProg = typeof localLift.progress === 'number' && !isNaN(localLift.progress) ? localLift.progress : 0;
       return {
         ...dbLift,

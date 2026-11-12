@@ -2,19 +2,46 @@ export const safeParseTimestamp = (val: any): number => {
     if (typeof val === 'number' && val > 0) return val;
     if (!val) return Date.now();
     if (typeof val === 'string') {
-        if (/^\d+$/.test(val)) {
-            const num = Number(val);
-            if (num > 0) return num;
+        const trimmed = val.trim();
+        if (!trimmed) return Date.now();
+        if (/^\d{10,13}$/.test(trimmed)) {
+            const num = Number(trimmed);
+            return num < 1e11 ? num * 1000 : num;
         }
-        let iso = val.trim();
+
+        // Hỗ trợ định dạng ngày Việt Nam / Google Sheets: DD/MM/YYYY hoặc DD/MM/YYYY HH:mm:ss
+        const dmyMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,\s]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+        if (dmyMatch) {
+            const [, d, m, y, h, min, s] = dmyMatch;
+            const date = new Date(
+                Number(y),
+                Number(m) - 1,
+                Number(d),
+                h ? Number(h) : 0,
+                min ? Number(min) : 0,
+                s ? Number(s) : 0
+            );
+            if (!isNaN(date.getTime()) && date.getTime() > 0) return date.getTime();
+        }
+
+        // Chuẩn hóa chuỗi ngày YYYY-MM-DD HH:mm:ss
+        let iso = trimmed;
         if (!iso.includes('T') && iso.includes(' ')) {
             iso = iso.replace(' ', 'T');
         }
+
+        // Thử parse thông thường (ưu tiên giữ nguyên timezone nếu có)
+        const parsedNormal = new Date(iso).getTime();
+        if (!isNaN(parsedNormal) && parsedNormal > 0) {
+            return parsedNormal;
+        }
+
+        // Fallback: nếu chuỗi ISO chưa có Z và chưa có offset, thêm Z để parse UTC
         if (!iso.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(iso)) {
             iso = iso + 'Z';
+            const parsedZ = new Date(iso).getTime();
+            if (!isNaN(parsedZ) && parsedZ > 0) return parsedZ;
         }
-        const parsed = new Date(iso).getTime();
-        if (!isNaN(parsed) && parsed > 0) return parsed;
     }
     return Date.now();
 };
