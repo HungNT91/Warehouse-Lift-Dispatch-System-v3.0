@@ -33,7 +33,7 @@ export function Lifts() {
   const canManage = user?.role === 'Admin' || user?.role === 'Supervisor';
 
   const filteredLifts = lifts.filter(lift => 
-    lift.lift_number.toLowerCase().includes(searchTerm.toLowerCase())
+    String(lift?.lift_number || lift?.id || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const getStatusBadge = (status: LiftStatus) => {

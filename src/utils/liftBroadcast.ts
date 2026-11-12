@@ -115,9 +115,6 @@ export function broadcastLiftArrival(
   }));
 
   // 4. Kiểm tra phát âm thanh TTS tại chính thiết bị/tab hiện tại
-  // NGUYÊN TẮC: CHỈ PHÁT NẾU THIẾT BỊ NÀY THỰC SỰ LÀ THIẾT BỊ TẦNG NHẬN HÀNG (normFloor)!
-  // Nếu máy tính này ở tầng khác (ví dụ Tầng gửi hàng hay phòng điều hành tầng khác),
-  // chỉ hiển thị Toast trực quan, TUYỆT ĐỐI KHÔNG PHÁT ÂM THANH!
   const { user, assignment } = useAuthStore.getState();
   const canSpeakHere = shouldPlayForRecipient(normFloor, liftId, '', user, assignment);
 
@@ -125,6 +122,99 @@ export function broadcastLiftArrival(
   toast.info(`🔔 ${notifTitle}`, { duration: 5000 });
 
   if (canSpeakHere) {
-    speakText(messageText);
+    speakText(messageText, false, false);
   }
 }
+
+/** Recent uncollected warning cache: map key `${liftId}-f${destFloor}-${minutes}` -> timestamp */
+const recentUncollectedWarnings = new Map<string, number>();
+
+/**
+ * Phát thanh cảnh báo hàng tồn đọng tại thang tời chưa lấy qua toàn bộ hệ thống
+ */
+export function broadcastUncollectedWarning(
+  liftId: string,
+  liftNumber: string,
+  floor: number,
+  minutes: number = 2
+) {
+  const normFloor = Number(floor) || 1;
+  const dedupKey = `uncol-${liftId}-f${normFloor}-${minutes}`;
+  const now = Date.now();
+  const lastTime = recentUncollectedWarnings.get(dedupKey) || 0;
+
+  // Chặn lặp lại cùng một thang và mốc thời gian trong vòng 45 giây
+  if (now - lastTime < 45000) {
+    return;
+  }
+  recentUncollectedWarnings.set(dedupKey, now);
+
+  const cleanLift = liftNumber
+    ? liftNumber.replace(/^Lift\s*/i, 'Tời ').replace(/^Thang\s*/i, 'Tời ')
+    : `Tời ${liftId}`;
+  const messageText = `Cảnh báo! ${cleanLift} tại Tầng ${normFloor} chưa được kéo hàng quá ${minutes} phút. Yêu cầu nhân viên kho Tầng ${normFloor} khẩn trương kéo hàng!`;
+
+  const senderSessionId = getSessionId();
+  const notifId = `uncol-${liftId}-${normFloor}-${minutes}-${now}`;
+
+  const snippet = messageText.substring(0, 50).trim();
+  playedNotificationIds.add(notifId);
+  playedNotificationIds.add(`snippet_${snippet}`);
+
+  // 1. BroadcastChannel tới các tab khác
+  if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+    try {
+      const bc = new BroadcastChannel('wlds_audio_dispatch');
+      bc.postMessage({
+        id: notifId,
+        targetFloor: normFloor,
+        targetLift: liftId,
+        senderSessionId,
+        text: messageText,
+        isWarning: true,
+        timestamp: now
+      });
+      setTimeout(() => {
+        try { bc.close(); } catch { }
+      }, 2000);
+    } catch (e) {
+      console.warn('BroadcastChannel uncollected broadcast error:', e);
+    }
+  }
+
+  // 2. Lưu vào Database Notification cho các thiết bị khác
+  const notifTitle = `🚨 Cảnh Báo Tồn Hàng: ${cleanLift} - Tầng ${normFloor} (${minutes} phút)`;
+  const formattedMessage = `[AUDIO_DISPATCH|F${normFloor}|LIFT:${liftId}|SENDER:system] ${messageText}`;
+
+  db.notifications.create({
+    notification_type: `AUDIO_DISPATCH_UNCOLLECTED_F${normFloor}_${liftId}`,
+    title: notifTitle,
+    message: formattedMessage,
+    status: 'SENT'
+  }).catch(console.error);
+
+  // 3. Thêm vào store cục bộ
+  useLiftStore.setState(state => ({
+    notifications: [{
+      id: notifId,
+      title: notifTitle,
+      message: formattedMessage,
+      severity: 'warning' as const,
+      category: 'uncollected' as const,
+      is_read: false,
+      created_at: new Date().toISOString(),
+      link_id: liftId
+    }, ...state.notifications]
+  }));
+
+  // 4. Kiểm tra phát âm thanh TTS tại chính thiết bị hiện tại
+  const { user, assignment } = useAuthStore.getState();
+  const canSpeakHere = shouldPlayForRecipient(normFloor, liftId, '', user, assignment);
+
+  toast.warning(`🚨 ${notifTitle}`, { duration: 6000 });
+
+  if (canSpeakHere) {
+    speakText(messageText, false, true);
+  }
+}
+

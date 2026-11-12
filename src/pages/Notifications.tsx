@@ -4,7 +4,7 @@ import {
   MessageCircle, Settings2, Sparkles, Filter, ChevronRight, ArrowUpDown, Clock
 } from 'lucide-react';
 import { useLiftStore } from '../stores/useLiftStore';
-import { playElevatorChime, speakText } from '../utils/audio';
+import { playElevatorChime, speakText, speakLiftArrival, speakUncollectedWarning } from '../utils/audio';
 import { AppNotification } from '../types';
 import { toast } from 'sonner';
 
@@ -29,9 +29,14 @@ export const NotificationsPage: React.FC = () => {
     toast.success('🔔 Đã phát thử âm thanh chuông thang máy!');
   };
 
-  const handleTestTTS = () => {
-    speakText('Thông báo! Thang P1 đã vận chuyển hàng đến Tầng 3. Mời nhân viên kiểm tra kéo hàng!');
-    toast.success('📢 Đã kích hoạt giọng nói TTS (Tiếng Việt)! Nếu không nghe thấy, vui lòng mở ứng dụng trong Tab mới (bấm nút "Open in new tab" ở góc trên bên phải) do chính sách bảo mật iframe của trình duyệt.');
+  const handleTestArrivalTTS = () => {
+    speakLiftArrival('Tời 01', 3, true);
+    toast.success('📢 Đã kích hoạt giọng nói thông báo thang cập bến (Tiếng Việt)!');
+  };
+
+  const handleTestUncollectedTTS = () => {
+    speakUncollectedWarning('Tời 02', 4, 2);
+    toast.warning('🚨 Đã kích hoạt chuông cảnh báo và giọng nói tồn hàng quá 2 phút!');
   };
   const getSeverityIcon = (severity: string) => {
     switch (severity) {
@@ -97,11 +102,19 @@ export const NotificationsPage: React.FC = () => {
           </button>
 
           <button
-            onClick={handleTestTTS}
+            onClick={handleTestArrivalTTS}
             className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
           >
-            <Volume2 className="w-4 h-4 animate-bounce" />
-            <span>Thử Giọng Nói (TTS)</span>
+            <Volume2 className="w-4 h-4" />
+            <span>Thử Đến Tầng (TTS)</span>
+          </button>
+
+          <button
+            onClick={handleTestUncollectedTTS}
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+          >
+            <AlertTriangle className="w-4 h-4 animate-bounce" />
+            <span>Thử Cảnh Báo Tồn Hàng</span>
           </button>
 
           <button

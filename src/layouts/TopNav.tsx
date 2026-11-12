@@ -12,7 +12,7 @@ import { cn } from "../lib/utils";
 import { getSupabase } from "../api/supabase";
 import { isSupabaseConfigured } from "../api/dbClient";
 import { isGoogleSheetConfigured } from "../config/sheetConfig";
-import { speakLiftArrival } from "../utils/audio";
+import { speakLiftArrival, speakUncollectedWarning } from "../utils/audio";
 import { toast } from "sonner";
 import { getNavItemsForRole } from "../config/navigation";
 
@@ -20,6 +20,7 @@ export function TopNav() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isFloorSelectorOpen, setIsFloorSelectorOpen] = useState(false);
+  const [isAudioMenuOpen, setIsAudioMenuOpen] = useState(false);
   const [stationFloor, setStationFloor] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('wlds_station_floor') || 'AUTO';
@@ -224,16 +225,58 @@ export function TopNav() {
             {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </button>
 
-          <button 
-            onClick={() => {
-              speakLiftArrival('Thang P1', 4);
-              toast.success("🔔 Đã thử nghiệm giọng nói thông báo thang cập bến!");
-            }}
-            title="Thử âm thanh giọng nói thông báo khi đến tầng"
-            className="relative p-2 text-slate-400 hover:text-amber-500 transition-colors cursor-pointer"
-          >
-            <Volume2 className="w-5 h-5 text-amber-500" />
-          </button>
+          <div className="relative">
+            <button 
+              onClick={() => setIsAudioMenuOpen(!isAudioMenuOpen)}
+              title="Kiểm tra âm thanh chuông & giọng nói thông báo"
+              className="relative p-2 text-slate-400 hover:text-amber-500 transition-colors cursor-pointer"
+            >
+              <Volume2 className="w-5 h-5 text-amber-500" />
+            </button>
+
+            {isAudioMenuOpen && (
+              <>
+                <div 
+                  className="fixed inset-0 z-40" 
+                  onClick={() => setIsAudioMenuOpen(false)} 
+                />
+                <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-slate-900 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-2 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 mb-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Kiểm tra âm thanh & TTS</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      speakLiftArrival('Tời 01', 4, true);
+                      toast.success("🔔 Đã thử giọng nói: Tời cập bến Tầng 4!");
+                      setIsAudioMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                    <span>Thử Thông Báo Đến Tầng</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      speakUncollectedWarning('Tời 01', 4, 2);
+                      toast.warning("🚨 Đã thử chuông & cảnh báo tồn hàng (>2m)!");
+                      setIsAudioMenuOpen(false);
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold text-rose-600 dark:text-rose-400 transition-colors cursor-pointer"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                    <span>Thử Cảnh Báo Tồn Hàng</span>
+                  </button>
+                  <Link
+                    to="/notifications"
+                    onClick={() => setIsAudioMenuOpen(false)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 text-[11px] font-medium text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 mt-1 pt-1.5 transition-colors cursor-pointer"
+                  >
+                    <span>⚙️ Cài đặt chuông & thông báo</span>
+                  </Link>
+                </div>
+              </>
+            )}
+          </div>
 
           <button className="relative p-2 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
             <Bell className="w-5 h-5" />

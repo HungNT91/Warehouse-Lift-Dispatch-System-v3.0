@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLiftStore } from '../../stores/useLiftStore';
 import { safeParseTimestamp } from '../../utils/time';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { speakUncollectedWarning } from '../../utils/audio';
+import { broadcastUncollectedWarning } from '../../utils/liftBroadcast';
 import { AlertTriangle, PackageCheck, Clock, Lock, ArrowRight, ShieldAlert } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { toast } from 'sonner';
@@ -50,14 +50,8 @@ export const UncollectedAlertBanner: React.FC = () => {
             lastWarnedIntervalRef.current[lift.id] = intervalNumber;
             const minutes = intervalNumber * 2;
 
-            // 1. Play Vietnamese Text-to-Speech Voice Warning ONLY for users assigned to this floor or Admins/Supervisors
-            const userAssignedFloor = assignment?.assigned_floor;
-            const isUserAdminOrSuper = user?.role === 'Admin' || user?.role === 'Supervisor';
-            const shouldPlaySound = isUserAdminOrSuper || !userAssignedFloor || userAssignedFloor === lift.current_floor;
-
-            if (shouldPlaySound) {
-              speakUncollectedWarning(lift.lift_number, lift.current_floor, minutes);
-            }
+            // Broadcast uncollected warning across all tabs, devices and local TTS
+            broadcastUncollectedWarning(lift.id, lift.lift_number, lift.current_floor, minutes);
           }
         }
       });
