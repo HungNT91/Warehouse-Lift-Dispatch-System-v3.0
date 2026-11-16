@@ -175,9 +175,9 @@ function processLiftsAndJobs(
       if (elapsedSecs >= totalSecs) {
         computedProgress = 100;
       } else {
-        const calcProg = Math.floor((elapsedSecs / totalSecs) * 100);
-        // Trong khi chưa hết 20s di chuyển, cap tối đa 95% để animation chạy mượt mà
-        computedProgress = isNaN(calcProg) ? 0 : Math.min(95, Math.max(0, calcProg));
+        const calcProg = Math.round((elapsedSecs / totalSecs) * 100);
+        // Trong khi chưa hết 20s di chuyển, cap tối đa 99% để animation chạy mượt mà
+        computedProgress = isNaN(calcProg) ? 0 : Math.min(99, Math.max(0, calcProg));
       }
     } else if (liftStatus === 'WAITING_PICKUP') {
       computedProgress = 100;
@@ -332,10 +332,11 @@ function processLiftsAndJobs(
         ? ((localLift.progress ?? 0) >= 100 ? dbLift.status : 'MOVING')
         : 'MOVING';
       const validLocalProg = typeof localLift.progress === 'number' && !isNaN(localLift.progress) ? localLift.progress : 0;
+      const syncedProg = newStatus === 'MOVING' ? Math.max(validLocalProg, dbLift.progress || 0) : (newStatus === 'AVAILABLE' ? 0 : 100);
       return {
         ...dbLift,
         status: newStatus,
-        progress: newStatus === 'MOVING' ? validLocalProg : (newStatus === 'AVAILABLE' ? 0 : 100),
+        progress: syncedProg,
         elapsed_time: localLift.elapsed_time,
         pickup_start_time: dbLift.pickup_start_time ?? localLift.pickup_start_time,
         destination_floor: newStatus === 'AVAILABLE' ? null : (dbLift.destination_floor ?? localLift.destination_floor),
@@ -929,7 +930,7 @@ export const useLiftStore = create<LiftState>((set, get) => ({
     }
 
     const existingJobs = [...get().jobs, ...(mockDbData.transportJobs || [])];
-    const newCode = generateJobNo(existingJobs, new Date());
+    const newCode = generateJobNo(existingJobs, new Date(), jobData.lift_id);
     const newJob: Job = {
       id: newCode,
       code: newCode,

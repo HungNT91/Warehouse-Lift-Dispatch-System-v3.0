@@ -81,7 +81,7 @@ export function useRealtimeSync() {
     refresh(false);
 
     if (isGoogleSheetConfigured()) {
-      console.info('[RealtimeSync] ✅ Đã kết nối Google Sheet → Đồng bộ tự động chu kỳ 6s.');
+      console.info('[RealtimeSync] ✅ Đã kết nối Google Sheet → Đồng bộ tự động chu kỳ 5s.');
       setSyncStatus('realtime', new Date());
       syncGoogleSheetData().then(() => {
         refresh(false);
@@ -196,7 +196,7 @@ export function useRealtimeSync() {
     console.info(`[RealtimeSync] 🔄 Polling thiết lập chu kỳ: ${intervalMs / 1000}s.`);
   }
 
-  function _startGoogleSheetPolling(intervalMs: number = 6_000) {
+  function _startGoogleSheetPolling(intervalMs: number = 5_000) {
     if (_pollingTimer) {
       clearInterval(_pollingTimer);
       _pollingTimer = null;

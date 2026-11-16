@@ -185,21 +185,52 @@ let cachedLifts: DbLift[] = [];
 let cachedUsers: DbUser[] = [];
 let _lastRestrictionSyncTime = 0;
 
-// Helper to generate sequential Job No: TR-ddmmyyyy-xxxx (e.g. TR-12112026-0001)
-export const generateJobNo = (existingJobs: { job_no?: string; id?: string; code?: string }[], date: Date = new Date()): string => {
+// Helper to generate sequential Job No: TR-ddmmyyyy-<liftCode>-xxxx (e.g. TR-16112026-P1-0001)
+export const generateJobNo = (
+  existingJobs: { job_no?: string; id?: string; code?: string }[],
+  date: Date = new Date(),
+  liftVal?: any
+): string => {
   const day = String(date.getDate()).padStart(2, '0');
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const year = String(date.getFullYear());
-  const prefix = `TR-${day}${month}${year}-`;
+
+  // Chuẩn hóa mã thang sang dạng ngắn gọn: P1, P2, P3, P4, P5, P6...
+  let liftCode = 'P1';
+  if (liftVal) {
+    const rawLift = String(liftVal).trim().toUpperCase();
+    const pMatch = rawLift.match(/P\d+/i);
+    const lMatch = rawLift.match(/L(?:IFT)?\s*(\d+)/i) || rawLift.match(/THANG\s*(\d+)/i) || rawLift.match(/T(?:OI)?\s*(\d+)/i);
+    if (pMatch) {
+      liftCode = pMatch[0].toUpperCase();
+    } else if (lMatch) {
+      liftCode = `P${lMatch[1]}`;
+    } else {
+      const resolved = resolveLiftId(liftVal);
+      liftCode = resolved ? String(resolved).toUpperCase() : 'P1';
+    }
+  }
+
+  const prefix = `TR-${day}${month}${year}-${liftCode}-`;
+  const legacyPrefix = `TR-${day}${month}${year}-`;
 
   let maxSeq = 0;
   (existingJobs || []).forEach(job => {
-    const code = String(job.job_no || job.id || (job as any).code || '').trim();
+    const code = String(job.job_no || job.id || (job as any).code || '').trim().toUpperCase();
     if (code.startsWith(prefix)) {
       const numPart = code.slice(prefix.length);
       const num = parseInt(numPart, 10);
       if (!isNaN(num) && num > maxSeq) {
         maxSeq = num;
+      }
+    } else if (liftCode === 'P1' && code.startsWith(legacyPrefix)) {
+      // Tương thích ngược với các đơn cũ trong ngày chưa có mã thang (ví dụ: TR-16112026-0001)
+      const afterDate = code.slice(legacyPrefix.length);
+      if (!afterDate.includes('-')) {
+        const num = parseInt(afterDate, 10);
+        if (!isNaN(num) && num > maxSeq) {
+          maxSeq = num;
+        }
       }
     }
   });
@@ -1010,7 +1041,7 @@ export const db = {
         : parseInt(String(job.to_floor || '').replace(/[^0-9]/g, ''), 10) || 2;
 
       const existingJobs = mockDbData.transportJobs || [];
-      const jobNo = job.job_no || generateJobNo(existingJobs, new Date());
+      const jobNo = job.job_no || generateJobNo(existingJobs, new Date(), job.lift_id);
       const jobId = job.id || jobNo;
       const nowIso = new Date().toISOString();
       const statusStr = job.status || 'CREATED';
@@ -1135,7 +1166,7 @@ export const db = {
             
             // Xử lý LỖI 4: duplicate key value violates unique constraint "transport_jobs_job_no_key"
             if (error && (error.code === '23505' || error.message.includes('job_no_key') || error.message.includes('unique constraint'))) {
-              const freshJobNo = generateJobNo([...mockDbData.transportJobs, { job_no: payload.job_no, id: payload.job_no }], new Date());
+              const freshJobNo = generateJobNo([...mockDbData.transportJobs, { job_no: payload.job_no, id: payload.job_no }], new Date(), payload.lift_id);
               console.warn(`⚠️ [Supabase transport_jobs] Trùng mã đơn ${payload.job_no}, tự sinh mã mới ${freshJobNo} và thử lại...`);
               payload.job_no = freshJobNo;
               newJob.id = freshJobNo;

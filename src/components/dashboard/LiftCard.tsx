@@ -512,6 +512,11 @@ export const LiftCard: React.FC<LiftCardProps> = ({ lift }) => {
               </motion.span>
             )}
             {direction}
+            {isMoving && (
+              <span className="text-blue-600 dark:text-blue-400 font-extrabold ml-1">
+                ({Math.round(lift.progress || 0)}%)
+              </span>
+            )}
             {lift.source_floor && isWaitingPickup && (
               <span className="text-amber-600 dark:text-amber-400 ml-1 font-extrabold">(Từ Tầng {lift.source_floor})</span>
             )}
